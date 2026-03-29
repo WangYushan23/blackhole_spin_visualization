@@ -2,6 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import re
 
 # 设置字体和样式
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
@@ -16,16 +17,13 @@ print(f"成功读取 {len(df)} 行数据")
 df['源'] = df['源'].ffill()
 df = df.dropna(subset=['源'])
 
-# 获取第一个黑洞（4U 1543-475 作为示例，因为参考图就是这个）
-# 如果你想要测试 4U 1630-472，可以改成 '4U 1630-472'
+# 获取指定黑洞
 first_source = '4U 1543-475'
 source_df = df[df['源'] == first_source].copy()
 source_df = source_df.reset_index(drop=True)
 
 print(f"\n黑洞: {first_source}")
 print(f"共有 {len(source_df)} 个数据点")
-print("\n数据预览:")
-print(source_df[['文献来源', '自旋值i', '自旋值i -', '自旋值i +', '拟合模型', '爆发时间']])
 
 # 定义颜色映射
 color_map = {
@@ -38,18 +36,38 @@ other_color = 'gray'
 # 定义模型顺序（从上到下）
 model_order = ['combining', 'reflection', 'continuum-fitting']
 
-# 辅助函数：从文献来源提取年份
+# 辅助函数：从文献来源提取年份和作者
+def parse_literature(lit_str):
+    """解析文献来源，返回 (作者, 年份)"""
+    if pd.isna(lit_str):
+        return ('Unknown', 'Unknown')
+    lit_str = str(lit_str).strip()
+    
+    # 提取年份
+    years = re.findall(r'\b(19|20)\d{2}\b', lit_str)
+    year = years[0] if years else 'Unknown'
+    
+    # 提取作者（取第一个单词作为第一作者）
+    # 移除年份部分
+    author_part = re.sub(r'\b(19|20)\d{2}\b', '', lit_str).strip()
+    # 如果有 "et al." 或 "et al"，保留
+    if 'et al' in author_part.lower():
+        author = author_part.split()[0] + ' et al.'
+    else:
+        # 取第一个单词作为作者名
+        author = author_part.split()[0] + ' et al.'
+    
+    return (author, year)
+
 def get_lit_year(literature):
     if pd.isna(literature):
         return 9999
     lit_str = str(literature)
-    import re
     years = re.findall(r'\b(19|20)\d{2}\b', lit_str)
     if years:
         return int(years[0])
     return 9999
 
-# 辅助函数：处理爆发年份（用于排序）
 def get_year_sort_key(year_str):
     if pd.isna(year_str):
         return 9999
@@ -65,17 +83,16 @@ def get_year_sort_key(year_str):
 # 添加辅助列
 source_df['lit_year'] = source_df['文献来源'].apply(get_lit_year)
 source_df['year_sort'] = source_df['爆发时间'].apply(get_year_sort_key)
+source_df['author'], source_df['lit_year_str'] = zip(*source_df['文献来源'].apply(parse_literature))
 
 # 按模型、爆发年份、文献年份排序
 sorted_indices = []
 for model in model_order:
     model_df = source_df[source_df['拟合模型'] == model]
     if len(model_df) > 0:
-        # 按爆发年份排序（早的在上）
         model_df = model_df.sort_values(['year_sort', 'lit_year'])
         sorted_indices.extend(model_df.index.tolist())
 
-# 处理其他模型（不在 model_order 中的）
 other_models = [m for m in source_df['拟合模型'].unique() if m not in model_order]
 for model in other_models:
     model_df = source_df[source_df['拟合模型'] == model]
@@ -86,7 +103,7 @@ for model in other_models:
 source_df = source_df.loc[sorted_indices].reset_index(drop=True)
 
 # 创建图形
-fig, ax = plt.subplots(figsize=(10, max(6, len(source_df) * 0.6)))
+fig, ax = plt.subplots(figsize=(12, max(6, len(source_df) * 0.8)))
 
 # 绘制每个数据点
 for i, row in source_df.iterrows():
@@ -94,8 +111,9 @@ for i, row in source_df.iterrows():
     error_min = row['自旋值i -']
     error_max = row['自旋值i +']
     model = row['拟合模型']
-    lit = row['文献来源']
+    author = row['author']
     burst_year = row['爆发时间']
+    lit_year = row['lit_year_str']
     
     # 确定颜色
     color = color_map.get(model, other_color)
@@ -115,20 +133,48 @@ for i, row in source_df.iterrows():
     else:
         ax.plot(a_star, i, 'o', color=color, markersize=8)
 
-# 设置y轴标签
-y_labels = []
-for i, row in source_df.iterrows():
-    model = row['拟合模型']
-    lit = row['文献来源']
-    burst_year = row['爆发时间']
-    
-    # 格式化标签：模型 爆发年份 文献来源
-    # 例如: combining 2002 Morningstar & Miller (2014)
-    label = f"{model} {burst_year} {lit}"
-    y_labels.append(label)
+# 设置y轴标签（在数据点下方）
+y_labels_upper = []  # 上方标签（自旋值）
+y_labels_lower = []  # 下方标签（模型、爆发年份、参考文献）
 
+for i, row in source_df.iterrows():
+    a_star = row['自旋值i']
+    error_min = row['自旋值i -']
+    error_max = row['自旋值i +']
+    model = row['拟合模型']
+    author = row['author']
+    burst_year = row['爆发时间']
+    lit_year = row['lit_year_str']
+    color = color_map.get(row['拟合模型'], other_color)
+    
+    # 上方标签：自旋值及其误差
+    if not pd.isna(error_min) and not pd.isna(error_max):
+        if error_min > 0 or error_max > 0:
+            # 格式: 0.30^{+0.10}_{-0.10}
+            upper_text = f"{a_star:.3f}$^{{+{error_max:.3f}}}_{{-{error_min:.3f}}}$"
+        else:
+            upper_text = f"{a_star:.3f}"
+    else:
+        upper_text = f"{a_star:.3f}"
+    
+    # 下方标签：模型 爆发年份 参考文献 (年份加括号)
+    # 格式: combining 2002 Miller et al. (2009)
+    lower_text = f"{model} {burst_year} {author} ({lit_year})"
+    
+    y_labels_upper.append((i, upper_text, color))
+    y_labels_lower.append((i, lower_text, color))
+
+# 设置y轴刻度和标签位置（隐藏默认刻度）
 ax.set_yticks(range(len(source_df)))
-ax.set_yticklabels(y_labels, fontsize=9)
+ax.set_yticklabels([])  # 隐藏默认标签
+
+# 手动添加上方标签（自旋值）
+for i, text, color in y_labels_upper:
+    ax.text(0.02, i, text, fontsize=9, va='center', ha='left', color=color, fontweight='bold')
+
+# 手动添加下方标签（模型、爆发年份、参考文献）
+for i, text, color in y_labels_lower:
+    ax.text(0.02, i - 0.25, text, fontsize=8, va='center', ha='left', color=color, alpha=0.8)
 
 # 设置x轴
 ax.set_xlim(0.0, 1.0)
@@ -138,36 +184,11 @@ ax.set_title('spin parameters comparison', fontsize=14, fontweight='bold')
 # 添加网格
 ax.grid(axis='x', linestyle='--', alpha=0.5)
 
-# 添加图例
-from matplotlib.lines import Line2D
-legend_elements = [
-    Line2D([0], [0], marker='o', color='w', markerfacecolor='green', 
-           markersize=10, label='combining'),
-    Line2D([0], [0], marker='o', color='w', markerfacecolor='red', 
-           markersize=10, label='reflection'),
-    Line2D([0], [0], marker='o', color='w', markerfacecolor='blue', 
-           markersize=10, label='continuum-fitting'),
-]
+# 设置y轴范围，给标签留出空间
+ax.set_ylim(-0.8, len(source_df) - 0.2)
 
-ax.legend(handles=legend_elements, loc='lower right', frameon=True, fontsize=10)
-
-# 添加自旋值文本标注（类似参考图的效果）
-for i, row in source_df.iterrows():
-    a_star = row['自旋值i']
-    error_min = row['自旋值i -']
-    error_max = row['自旋值i +']
-    
-    if not pd.isna(error_min) and not pd.isna(error_max):
-        # 格式化误差文本，类似 0.30^{+0.10}_{-0.10}
-        if error_min > 0 or error_max > 0:
-            text = f"{a_star:.3f}$^{{+{error_max:.3f}}}_{{-{error_min:.3f}}}$"
-        else:
-            text = f"{a_star:.3f}"
-    else:
-        text = f"{a_star:.3f}"
-    
-    # 在数据点右侧添加文本
-    ax.text(a_star + 0.02, i, text, fontsize=8, va='center')
+# 调整x轴标签位置，给左侧标签留出空间
+ax.set_xlim(-0.15, 1.05)
 
 plt.tight_layout()
 
