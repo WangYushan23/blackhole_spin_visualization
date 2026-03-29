@@ -2,85 +2,79 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-from pathlib import Path
+import re
 
-# 设置中文字体（解决中文显示问题）
+# 设置字体和样式
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
-# 定义颜色映射（拟合模型 -> 颜色）
+# 定义颜色映射
 color_map = {
+    'combining': 'green',
     'reflection': 'red',
-    'continuum-fitting': 'blue',
-    'combining': 'green'
+    'continuum-fitting': 'blue'
 }
-# 其他模型统一用灰色
 other_color = 'gray'
 
-# 定义年份类别和形状映射
-def get_year_category(year_str):
-    """根据爆发时间字符串返回年份类别"""
-    if pd.isna(year_str):
-        return 'unknown'
-    year_str = str(year_str).strip()
-    # 如果包含 + 或 - 或 , 或空格，视为多年份
-    if '+' in year_str or '-' in year_str and len(year_str) > 5 or ',' in year_str:
-        return 'multi_year'
-    # 如果是纯数字年份
-    if year_str.isdigit() and len(year_str) == 4:
-        return year_str
-    return 'unknown'
+# 定义模型顺序（从上到下）
+model_order = ['combining', 'reflection', 'continuum-fitting']
+
+def parse_literature(lit_str):
+    """解析文献来源，返回 (作者, 完整年份)"""
+    if pd.isna(lit_str):
+        return ('Unknown', 'Unknown')
+    lit_str = str(lit_str).strip()
+    years = re.findall(r'\b(?:19|20)\d{2}\b', lit_str)
+    year = years[0] if years else 'Unknown'
+    author_part = re.sub(r'\b(?:19|20)\d{2}\b', '', lit_str).strip()
+    if 'et al' in author_part.lower():
+        author = author_part.split()[0] + ' et al.'
+    else:
+        author = author_part.split()[0] + ' et al.'
+    return (author, year)
+
+def get_lit_year(literature):
+    if pd.isna(literature):
+        return 9999
+    lit_str = str(literature)
+    years = re.findall(r'\b(?:19|20)\d{2}\b', lit_str)
+    return int(years[0]) if years else 9999
 
 def get_year_sort_key(year_str):
-    """返回用于排序的年份数值"""
+    """处理爆发年份，提取排序用的年份（最早年份）"""
     if pd.isna(year_str):
-        return 9999  # 未知年份排最后
+        return 9999
     year_str = str(year_str).strip()
     if '+' in year_str:
-        # 多年份取第一个年份
-        first_year = year_str.split('+')[0]
-        if first_year.isdigit():
-            return int(first_year)
+        first = year_str.split('+')[0]
+        if first.isdigit():
+            return int(first)
     if '-' in year_str and len(year_str) > 5:
-        first_year = year_str.split('-')[0]
-        if first_year.isdigit():
-            return int(first_year)
+        first = year_str.split('-')[0]
+        if first.isdigit():
+            return int(first)
     if year_str.isdigit():
         return int(year_str)
     return 9999
 
-# 定义形状映射
-shape_map = {
-    'single_year': 'o',      # 单一年份用圆形
-    'multi_year': '^',       # 多年份用三角形
-    'unknown': 's'           # 未知年份用方形
-}
-
-def get_shape_category(year_str):
-    """返回形状类别"""
+def format_burst_year(year_str):
+    """格式化爆发年份用于显示（保持原样，但补全两位数年份为四位数）"""
     if pd.isna(year_str):
-        return 'unknown'
+        return 'Unknown'
     year_str = str(year_str).strip()
-    if '+' in year_str or ('-' in year_str and len(year_str) > 5) or ',' in year_str:
-        return 'multi_year'
+    if '+' in year_str or '-' in year_str:
+        return year_str
     if year_str.isdigit():
-        return 'single_year'
-    return 'unknown'
-
-def get_literature_year(literature):
-    """从文献来源提取年份"""
-    if pd.isna(literature):
-        return 9999
-    lit_str = str(literature)
-    # 提取4位数字年份
-    import re
-    years = re.findall(r'\b(19|20)\d{2}\b', lit_str)
-    if years:
-        return int(years[0])
-    return 9999
+        if len(year_str) == 2:
+            if int(year_str) >= 90:
+                return '19' + year_str
+            else:
+                return '20' + year_str
+        return year_str
+    return year_str
 
 def has_valid_error(error_min, error_max):
-    """判断误差是否有效（非NaN、非inf、非0）"""
+    """判断误差是否有效"""
     if pd.isna(error_min) or pd.isna(error_max):
         return False
     if np.isinf(error_min) or np.isinf(error_max):
@@ -89,219 +83,136 @@ def has_valid_error(error_min, error_max):
         return False
     return True
 
-def prepare_data(df):
-    """准备和清洗数据"""
-    # 复制数据
-    df_clean = df.copy()
-    
-    # 向前填充黑洞名称（处理空值）
-    df_clean['源'] = df_clean['源'].fillna(method='ffill')
-    
-    # 删除仍然没有源名称的行
-    df_clean = df_clean.dropna(subset=['源'])
-    
-    # 重置索引
-    df_clean = df_clean.reset_index(drop=True)
-    
-    # 添加处理后的列
-    df_clean['year_sort'] = df_clean['爆发时间'].apply(get_year_sort_key)
-    df_clean['year_category'] = df_clean['爆发时间'].apply(get_year_category)
-    df_clean['shape_category'] = df_clean['爆发时间'].apply(get_shape_category)
-    df_clean['lit_year'] = df_clean['文献来源'].apply(get_literature_year)
-    
-    return df_clean
-
-def get_y_position(df, source_name):
-    """为指定黑洞的数据点分配y坐标"""
-    # 筛选该黑洞的数据
+def prepare_source_df(df, source_name):
+    """为指定黑洞准备并排序数据"""
     source_df = df[df['源'] == source_name].copy()
+    if len(source_df) == 0:
+        return None
     
-    # 按模型分组排序
-    model_order = ['reflection', 'continuum-fitting', 'combining']
-    other_models = [m for m in source_df['拟合模型'].unique() if m not in model_order]
+    # 添加辅助列
+    source_df['lit_year'] = source_df['文献来源'].apply(get_lit_year)
+    source_df['year_sort'] = source_df['爆发时间'].apply(get_year_sort_key)
+    source_df['burst_year_display'] = source_df['爆发时间'].apply(format_burst_year)
+    source_df['author'], source_df['lit_year_str'] = zip(*source_df['文献来源'].apply(parse_literature))
     
-    # 构建排序键
-    def get_sort_key(row):
-        model = row['拟合模型']
-        # 模型优先级
-        if model in model_order:
-            model_priority = model_order.index(model)
-        else:
-            model_priority = len(model_order)  # 其他模型排最后
-        
-        # 爆发年份（早的在上）
-        year = row['year_sort']
-        # 文献年份（早的在上）
-        lit_year = row['lit_year']
-        
-        return (model_priority, year, lit_year)
-    
-    # 排序
-    source_df = source_df.sort_values(by=['拟合模型', 'year_sort', 'lit_year'], 
-                                       key=lambda x: x.apply(get_sort_key if x.name == '拟合模型' else (lambda y: y)))
-    
-    # 重新排序
+    # 按模型、爆发年份、文献年份排序
     sorted_indices = []
-    for model in model_order + other_models:
+    for model in model_order:
         model_df = source_df[source_df['拟合模型'] == model]
         if len(model_df) > 0:
-            # 按年份和文献年份排序
+            model_df = model_df.sort_values(['year_sort', 'lit_year'])
+            sorted_indices.extend(model_df.index.tolist())
+    other_models = [m for m in source_df['拟合模型'].unique() if m not in model_order]
+    for model in other_models:
+        model_df = source_df[source_df['拟合模型'] == model]
+        if len(model_df) > 0:
             model_df = model_df.sort_values(['year_sort', 'lit_year'])
             sorted_indices.extend(model_df.index.tolist())
     
-    source_df = source_df.loc[sorted_indices] if sorted_indices else source_df
-    
-    # 分配y坐标（从上到下，0,1,2,...）
-    y_positions = {}
-    for i, idx in enumerate(source_df.index):
-        y_positions[idx] = i
-    
-    return y_positions
+    source_df = source_df.loc[sorted_indices].reset_index(drop=True)
+    return source_df
 
-def plot_single_source(df, source_name, y_positions, output_dir):
-    """为单个黑洞绘制图表"""
-    source_df = df[df['源'] == source_name]
+def plot_single_source(source_df, source_name, output_dir):
+    """绘制单个黑洞的图表"""
+    n_points = len(source_df)
+    y_min = -0.5
+    y_max = n_points - 0.5
     
-    if len(source_df) == 0:
-        return
+    fig, ax = plt.subplots(figsize=(14, max(7, n_points * 0.8)))
     
-    fig, ax = plt.subplots(figsize=(10, max(4, len(source_df) * 0.4)))
-    
-    # 绘制每个数据点
-    for idx, row in source_df.iterrows():
-        if idx not in y_positions:
-            continue
-        
-        y = y_positions[idx]
+    # 绘制数据点和误差棒
+    for i, row in source_df.iterrows():
         a_star = row['自旋值i']
         error_min = row['自旋值i -']
         error_max = row['自旋值i +']
         model = row['拟合模型']
-        shape_cat = row['shape_category']
-        
-        # 确定颜色
         color = color_map.get(model, other_color)
         
-        # 确定形状
-        marker = shape_map.get(shape_cat, 'o')
-        
-        # 确定是否画误差棒
-        has_error = has_valid_error(error_min, error_max)
-        
-        if has_error:
-            # 不对称误差
+        if has_valid_error(error_min, error_max):
             xerr = [[error_min], [error_max]]
-            ax.errorbar(a_star, y, xerr=xerr, fmt=marker, color=color,
-                       capsize=4, markersize=8, elinewidth=1.5,
-                       label=None)
+            ax.errorbar(a_star, i, xerr=xerr, fmt='o', color=color,
+                       capsize=5, markersize=10, elinewidth=2,
+                       ecolor=color, markeredgecolor=color, markerfacecolor=color)
         else:
-            # 只画点
-            ax.plot(a_star, y, marker=marker, color=color, 
-                   markersize=8, linestyle='None')
+            ax.plot(a_star, i, 'o', color=color, markersize=10)
     
-    # 设置y轴
-    y_max = len(source_df)
-    ax.set_ylim(-0.5, y_max - 0.5)
+    # 添加标注
+    for i, row in source_df.iterrows():
+        a_star = row['自旋值i']
+        error_min = row['自旋值i -']
+        error_max = row['自旋值i +']
+        model = row['拟合模型']
+        author = row['author']
+        burst_year = row['burst_year_display']
+        lit_year = row['lit_year_str']
+        color = color_map.get(row['拟合模型'], other_color)
+        
+        # 数值标签
+        if has_valid_error(error_min, error_max):
+            upper_text = f"{a_star:.3f}$^{{+{error_max:.3f}}}_{{-{error_min:.3f}}}$"
+        else:
+            upper_text = f"{a_star:.3f}"
+        ax.text(a_star, i + 0.2, upper_text, fontsize=11, va='bottom', ha='center',
+                color=color, fontweight='bold')
+        
+        # 文献标签
+        lower_text = f"{model} {burst_year} {author} ({lit_year})"
+        ax.text(-0.08, i, lower_text, fontsize=11, va='center', ha='right',
+                color=color, alpha=0.9)
     
-    # 设置y轴标签（文献来源）
-    y_labels = []
-    for idx, row in source_df.iterrows():
-        if idx in y_positions:
-            y_pos = y_positions[idx]
-            # 标签格式：文献来源 (年份)
-            label = f"{row['文献来源']} ({row['爆发时间']})"
-            y_labels.append((y_pos, label))
+    # 隐藏 y 轴
+    ax.set_yticks([])
+    ax.set_ylim(y_min, y_max)
     
-    y_labels.sort(key=lambda x: x[0])
-    ax.set_yticks([y for y, _ in y_labels])
-    ax.set_yticklabels([label for _, label in y_labels], fontsize=9)
+    # 设置 x 轴
+    ax.set_xlim(0, 1.05)   # 用户指定从 0 开始
+    ax.set_xlabel(r'$a_*$', fontsize=16, ha='center', fontweight='bold')
+    ax.grid(axis='x', linestyle='--', alpha=0.5, linewidth=0.8)
     
-    # 设置x轴
-    ax.set_xlim(0.0, 1.0)
-    ax.set_xlabel(r'自旋参数 $a_*$', fontsize=12)
+    # 标题
+    ax.set_title(source_name, fontsize=16, fontweight='bold')
+    ax.tick_params(axis='x', labelsize=12)
     
-    # 设置标题
-    ax.set_title(f'{source_name} - 自旋参数比较', fontsize=14, fontweight='bold')
-    
-    # 添加网格
-    ax.grid(axis='x', linestyle='--', alpha=0.5)
-    
-    # 添加图例
-    from matplotlib.lines import Line2D
-    legend_elements = []
-    
-    # 模型图例
-    for model, color in color_map.items():
-        legend_elements.append(Line2D([0], [0], marker='o', color='w', 
-                                      markerfacecolor=color, markersize=10, 
-                                      label=model))
-    # 其他模型
-    other_models = set(source_df['拟合模型']) - set(color_map.keys())
-    if other_models:
-        legend_elements.append(Line2D([0], [0], marker='o', color='w', 
-                                      markerfacecolor=other_color, markersize=10, 
-                                      label='其他模型'))
-    
-    # 年份形状图例
-    legend_elements.append(Line2D([0], [0], marker='o', color='k', 
-                                  linestyle='None', markersize=8, 
-                                  label='单一年份'))
-    legend_elements.append(Line2D([0], [0], marker='^', color='k', 
-                                  linestyle='None', markersize=8, 
-                                  label='多年份'))
-    legend_elements.append(Line2D([0], [0], marker='s', color='k', 
-                                  linestyle='None', markersize=8, 
-                                  label='未知年份'))
-    
-    ax.legend(handles=legend_elements, loc='upper left', 
-              bbox_to_anchor=(1.01, 1), frameon=False, fontsize=9)
-    
+    # 为左侧标签预留空间
+    plt.subplots_adjust(left=0.2)
     plt.tight_layout()
     
-    # 保存图片
+    # 保存图片（文件名只包含源名称，特殊字符替换为下划线）
     safe_name = source_name.replace('/', '_').replace('\\', '_').replace(' ', '_').replace('\n', '_')
-    output_path = os.path.join(output_dir, f'spin_comparison_{safe_name}.png')
+    output_path = os.path.join(output_dir, f'{safe_name}.png')
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
-    
     print(f"已生成: {safe_name}.png ({len(source_df)} 个数据点)")
 
 def main():
-    """主函数"""
-    # 设置路径
-    data_path = 'data/数据收集 表3.xlsx'
-    output_dir = 'output'
-    
-    # 创建输出目录
-    os.makedirs(output_dir, exist_ok=True)
-    
     # 读取数据
     print("正在读取数据...")
-    df = pd.read_excel(data_path, sheet_name='Sheet1')
+    df = pd.read_excel('data/数据收集 表3.xlsx', sheet_name='Sheet1')
     print(f"成功读取 {len(df)} 行数据")
     
-    # 清洗数据
-    print("正在清洗数据...")
-    df_clean = prepare_data(df)
-    print(f"清洗后剩余 {len(df_clean)} 行数据")
+    # 清洗：向前填充黑洞名称
+    df['源'] = df['源'].ffill()
+    df = df.dropna(subset=['源'])
+    print(f"清洗后剩余 {len(df)} 行数据")
     
     # 获取所有黑洞名称
-    sources = df_clean['源'].unique()
-    print(f"共 {len(sources)} 个黑洞")
+    sources = df['源'].unique()
+    print(f"共发现 {len(sources)} 个黑洞")
     
-    # 为每个黑洞生成图片
-    print("\n开始生成图片...")
+    # 创建输出目录
+    output_dir = 'output'
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # 逐个黑洞绘图
     for i, source in enumerate(sources, 1):
-        # 获取y轴位置
-        y_positions = get_y_position(df_clean, source)
-        
-        # 绘图
-        plot_single_source(df_clean, source, y_positions, output_dir)
-        
-        if i % 10 == 0:
-            print(f"已完成 {i}/{len(sources)} 个黑洞")
+        print(f"\n[{i}/{len(sources)}] 处理黑洞: {source}")
+        source_df = prepare_source_df(df, source)
+        if source_df is None:
+            print("  警告: 无有效数据，跳过")
+            continue
+        plot_single_source(source_df, source, output_dir)
     
-    print(f"\n完成！图片已保存到 {output_dir}/ 文件夹")
+    print(f"\n全部完成！图片已保存到 {output_dir}/ 文件夹")
 
 if __name__ == '__main__':
     main()
