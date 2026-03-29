@@ -36,16 +36,19 @@ other_color = 'gray'
 # 定义模型顺序（从上到下：combining在最顶部，reflection中间，continuum-fitting最底部）
 model_order = ['combining', 'reflection', 'continuum-fitting']
 
-# 辅助函数：从文献来源提取年份和作者
+# 辅助函数：从文献来源提取年份和作者（补全完整年份）
 def parse_literature(lit_str):
-    """解析文献来源，返回 (作者, 年份)"""
+    """解析文献来源，返回 (作者, 完整年份)"""
     if pd.isna(lit_str):
         return ('Unknown', 'Unknown')
     lit_str = str(lit_str).strip()
     
-    # 提取年份
+    # 提取年份（4位数字）
     years = re.findall(r'\b(19|20)\d{2}\b', lit_str)
+    # 补全完整年份（确保是4位）
     year = years[0] if years else 'Unknown'
+    if year != 'Unknown' and len(year) == 4:
+        year = year
     
     # 提取作者（取第一个单词作为第一作者）
     author_part = re.sub(r'\b(19|20)\d{2}\b', '', lit_str).strip()
@@ -95,8 +98,14 @@ def format_burst_year(year_str):
     # 如果已经是完整格式，直接返回
     if '+' in year_str or '-' in year_str:
         return year_str
-    # 如果是纯数字年份
+    # 如果是纯数字年份，补全为4位
     if year_str.isdigit():
+        if len(year_str) == 2:
+            # 假设20世纪或21世纪，这里简单处理，根据实际数据调整
+            if int(year_str) >= 90:
+                return '19' + year_str
+            else:
+                return '20' + year_str
         return year_str
     return year_str
 
@@ -106,7 +115,7 @@ source_df['year_sort'] = source_df['爆发时间'].apply(get_year_sort_key)
 source_df['burst_year_display'] = source_df['爆发时间'].apply(format_burst_year)
 source_df['author'], source_df['lit_year_str'] = zip(*source_df['文献来源'].apply(parse_literature))
 
-# 按模型、爆发年份、文献年份排序（combining在顶部，reflection中间，continuum-fitting底部）
+# 按模型、爆发年份、文献年份排序
 sorted_indices = []
 for model in model_order:
     model_df = source_df[source_df['拟合模型'] == model]
@@ -115,7 +124,6 @@ for model in model_order:
         model_df = model_df.sort_values(['year_sort', 'lit_year'])
         sorted_indices.extend(model_df.index.tolist())
 
-# 处理其他模型（如果存在）
 other_models = [m for m in source_df['拟合模型'].unique() if m not in model_order]
 for model in other_models:
     model_df = source_df[source_df['拟合模型'] == model]
@@ -127,13 +135,11 @@ source_df = source_df.loc[sorted_indices].reset_index(drop=True)
 
 # 设置均匀的垂直间距
 n_points = len(source_df)
-# 设置y轴范围，给顶部和底部留出空间
 y_min = -0.5
 y_max = n_points - 0.5
-# 每个点之间的间距为1
 
-# 创建图形
-fig, ax = plt.subplots(figsize=(12, max(5, n_points * 0.6)))
+# 创建图形（放大图片尺寸）
+fig, ax = plt.subplots(figsize=(14, max(7, n_points * 0.8)))
 
 # 绘制每个数据点
 for i, row in source_df.iterrows():
@@ -155,12 +161,12 @@ for i, row in source_df.iterrows():
     if has_error:
         xerr = [[error_min], [error_max]]
         ax.errorbar(a_star, i, xerr=xerr, fmt='o', color=color,
-                   capsize=4, markersize=8, elinewidth=1.5,
+                   capsize=5, markersize=10, elinewidth=2,
                    ecolor=color, markeredgecolor=color, markerfacecolor=color)
     else:
-        ax.plot(a_star, i, 'o', color=color, markersize=8)
+        ax.plot(a_star, i, 'o', color=color, markersize=10)
 
-# 添加标注
+# 添加标注（放大字体）
 for i, row in source_df.iterrows():
     a_star = row['自旋值i']
     error_min = row['自旋值i -']
@@ -183,31 +189,34 @@ for i, row in source_df.iterrows():
     # 左侧标签：模型 爆发年份 作者 (年份)（放在点左侧）
     lower_text = f"{model} {burst_year} {author} ({lit_year})"
     
-    # 数值标签放在点正上方（偏移量0.35）
-    ax.text(a_star, i + 0.35, upper_text, fontsize=8, va='bottom', ha='center', 
+    # 数值标签放在点正上方（放大字体）
+    ax.text(a_star, i + 0.4, upper_text, fontsize=11, va='bottom', ha='center', 
             color=color, fontweight='bold')
     
-    # 文献标签放在点左侧（偏移量-0.12）
-    ax.text(-0.12, i, lower_text, fontsize=8, va='center', ha='right', 
+    # 文献标签放在点左侧（放大字体）
+    ax.text(-0.15, i, lower_text, fontsize=10, va='center', ha='right', 
             color=color, alpha=0.9)
 
 # 设置y轴：隐藏刻度，只保留均匀间距
 ax.set_yticks(range(n_points))
-ax.set_yticklabels([])  # 隐藏y轴标签
+ax.set_yticklabels([])
 ax.set_ylim(y_min, y_max)
 
-# 设置x轴
+# 设置x轴（范围0-1）
 ax.set_xlim(0.0, 1.0)
-ax.set_xlabel(r'$a_*$', fontsize=14, ha='center')
+ax.set_xlabel(r'$a_*$', fontsize=16, ha='center', fontweight='bold')
 
 # 添加网格
-ax.grid(axis='x', linestyle='--', alpha=0.5)
+ax.grid(axis='x', linestyle='--', alpha=0.5, linewidth=0.8)
 
 # 调整x轴范围，给左侧标签留出空间
-ax.set_xlim(-0.35, 1.05)
+ax.set_xlim(-0.4, 1.05)
 
-# 设置标题
-ax.set_title('spin parameters comparison', fontsize=14, fontweight='bold')
+# 设置标题（放大字体）
+ax.set_title('spin parameters comparison', fontsize=16, fontweight='bold')
+
+# 设置坐标轴刻度字体大小
+ax.tick_params(axis='x', labelsize=12)
 
 plt.tight_layout()
 
