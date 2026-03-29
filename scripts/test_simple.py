@@ -190,14 +190,12 @@ for i, row in source_df.iterrows():
     ax.text(a_star, i + 0.2, upper_text, fontsize=11, va='bottom', ha='center', 
             color=color, fontweight='bold')
     
-    # 文献标签放在点左侧（x坐标右移到 -0.02，字体增大到 11）
-    ax.text(-0.02, i, lower_text, fontsize=11, va='center', ha='right', 
+    # 文献标签放在点左侧（x坐标调整为 -0.08，配合左侧空间）
+    ax.text(-0.08, i, lower_text, fontsize=11, va='center', ha='right', 
             color=color, alpha=0.9)
 
 # 完全隐藏 y 轴（刻度线和刻度标签）
 ax.set_yticks([])
-
-# 设置 y 轴范围
 ax.set_ylim(y_min, y_max)
 
 # 设置 x 轴（范围 0-1）
@@ -207,14 +205,17 @@ ax.set_xlabel(r'$a_*$', fontsize=16, ha='center', fontweight='bold')
 # 添加网格
 ax.grid(axis='x', linestyle='--', alpha=0.5, linewidth=0.8)
 
-# 调整 x 轴范围，给左侧标签留出空间（标签右移，左边界可适当减小）
-ax.set_xlim(-0.32, 1.05)
+# 调整 x 轴左边界，为左侧标签预留更多空间
+ax.set_xlim(0, 1.05)
 
 # 设置标题为源名称
 ax.set_title(first_source, fontsize=16, fontweight='bold')
 
 # 设置坐标轴刻度字体大小
 ax.tick_params(axis='x', labelsize=12)
+
+# 为左侧标签预留更多空间（关键调整）
+plt.subplots_adjust(left=0.2)
 
 plt.tight_layout()
 
