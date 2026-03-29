@@ -43,15 +43,12 @@ def parse_literature(lit_str):
         return ('Unknown', 'Unknown')
     lit_str = str(lit_str).strip()
     
-    # 提取年份（4位数字）
-    years = re.findall(r'\b(19|20)\d{2}\b', lit_str)
-    # 补全完整年份（确保是4位）
+    # 使用非捕获组匹配完整四位年份
+    years = re.findall(r'\b(?:19|20)\d{2}\b', lit_str)
     year = years[0] if years else 'Unknown'
-    if year != 'Unknown' and len(year) == 4:
-        year = year
     
     # 提取作者（取第一个单词作为第一作者）
-    author_part = re.sub(r'\b(19|20)\d{2}\b', '', lit_str).strip()
+    author_part = re.sub(r'\b(?:19|20)\d{2}\b', '', lit_str).strip()
     # 如果有 "et al." 或 "et al"，保留
     if 'et al' in author_part.lower():
         author = author_part.split()[0] + ' et al.'
@@ -65,7 +62,7 @@ def get_lit_year(literature):
     if pd.isna(literature):
         return 9999
     lit_str = str(literature)
-    years = re.findall(r'\b(19|20)\d{2}\b', lit_str)
+    years = re.findall(r'\b(?:19|20)\d{2}\b', lit_str)
     if years:
         return int(years[0])
     return 9999
@@ -177,7 +174,7 @@ for i, row in source_df.iterrows():
     lit_year = row['lit_year_str']
     color = color_map.get(row['拟合模型'], other_color)
     
-    # 上方标签：自旋值及其误差（放在点正上方）
+    # 上方标签：自旋值及其误差（放在点正上方，垂直偏移量减小为0.2）
     if not pd.isna(error_min) and not pd.isna(error_max):
         if (error_min > 0 or error_max > 0) and not np.isinf(error_min) and not np.isinf(error_max):
             upper_text = f"{a_star:.3f}$^{{+{error_max:.3f}}}_{{-{error_min:.3f}}}$"
@@ -186,15 +183,15 @@ for i, row in source_df.iterrows():
     else:
         upper_text = f"{a_star:.3f}"
     
-    # 左侧标签：模型 爆发年份 作者 (年份)（放在点左侧）
+    # 左侧标签：模型 爆发年份 作者 (年份)（放在点左侧，x坐标右移为-0.05）
     lower_text = f"{model} {burst_year} {author} ({lit_year})"
     
-    # 数值标签放在点正上方（放大字体）
-    ax.text(a_star, i + 0.4, upper_text, fontsize=11, va='bottom', ha='center', 
+    # 数值标签放在点正上方（垂直偏移0.2）
+    ax.text(a_star, i + 0.2, upper_text, fontsize=11, va='bottom', ha='center', 
             color=color, fontweight='bold')
     
-    # 文献标签放在点左侧（放大字体）
-    ax.text(-0.15, i, lower_text, fontsize=10, va='center', ha='right', 
+    # 文献标签放在点左侧（x坐标改为-0.05，向右移动）
+    ax.text(-0.05, i, lower_text, fontsize=10, va='center', ha='right', 
             color=color, alpha=0.9)
 
 # 设置y轴：隐藏刻度，只保留均匀间距
@@ -209,8 +206,8 @@ ax.set_xlabel(r'$a_*$', fontsize=16, ha='center', fontweight='bold')
 # 添加网格
 ax.grid(axis='x', linestyle='--', alpha=0.5, linewidth=0.8)
 
-# 调整x轴范围，给左侧标签留出空间
-ax.set_xlim(-0.4, 1.05)
+# 调整x轴范围，给左侧标签留出空间（因为标签右移，左边界可以适当减小）
+ax.set_xlim(-0.35, 1.05)
 
 # 设置标题（放大字体）
 ax.set_title('spin parameters comparison', fontsize=16, fontweight='bold')
