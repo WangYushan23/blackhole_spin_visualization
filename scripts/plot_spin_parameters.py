@@ -77,15 +77,26 @@ def has_valid_error(error_min, error_max):
     """判断误差是否有效"""
     if pd.isna(error_min) or pd.isna(error_max):
         return False
-    if np.isinf(error_min) or np.isinf(error_max):
+    try:
+        if np.isinf(error_min) or np.isinf(error_max):
+            return False
+        if error_min == 0 and error_max == 0:
+            return False
+        # 检查是否为有效数字
+        if np.isnan(error_min) or np.isnan(error_max):
+            return False
+        return True
+    except:
         return False
-    if error_min == 0 and error_max == 0:
-        return False
-    return True
 
 def prepare_source_df(df, source_name):
     """为指定黑洞准备并排序数据"""
     source_df = df[df['源'] == source_name].copy()
+    if len(source_df) == 0:
+        return None
+    
+    # 过滤掉自旋值为无效的数据
+    source_df = source_df[pd.notna(source_df['自旋值i'])]
     if len(source_df) == 0:
         return None
     
@@ -120,25 +131,107 @@ def plot_single_source(source_df, source_name, output_dir):
     
     fig, ax = plt.subplots(figsize=(14, max(7, n_points * 0.8)))
     
+    # 计算所有数据点（包括误差）的最小值和最大值
+    all_values = []
+    for _, row in source_df.iterrows():
+        a_star = row['自旋值i']
+        
+        # 跳过无效的自旋值
+        if pd.isna(a_star) or np.isinf(a_star):
+            print(f"  警告: 跳过无效自旋值 {a_star}")
+            continue
+            
+        error_min = row['自旋值i -']
+        error_max = row['自旋值i +']
+        
+        # 添加中心值
+        all_values.append(a_star)
+        
+        # 如果有有效误差，添加误差边界
+        if has_valid_error(error_min, error_max):
+            try:
+                lower_bound = a_star - error_min
+                upper_bound = a_star + error_max
+                if not np.isnan(lower_bound) and not np.isinf(lower_bound):
+                    all_values.append(lower_bound)
+                if not np.isnan(upper_bound) and not np.isinf(upper_bound):
+                    all_values.append(upper_bound)
+            except:
+                pass
+    
+    # 如果没有有效值，使用默认范围
+    if not all_values:
+        print(f"  警告: 黑洞 {source_name} 没有有效数据点，使用默认范围")
+        x_min = 0
+        x_max = 1.05
+    else:
+        # 过滤掉无效值
+        valid_values = [v for v in all_values if not np.isnan(v) and not np.isinf(v)]
+        if not valid_values:
+            x_min = 0
+            x_max = 1.05
+        else:
+            x_min = min(valid_values)
+            x_max = max(valid_values)
+            
+            # 添加一些边距（10%）
+            x_range = x_max - x_min
+            if x_range > 0:
+                x_min = x_min - x_range * 0.1
+                x_max = x_max + x_range * 0.1
+            else:
+                # 如果所有值相同，添加对称边距
+                x_min = x_min - 0.1
+                x_max = x_max + 0.1
+            
+            # 确保x_min不超过负太多（至少保留到-0.2，给负数留空间）
+            x_min = min(x_min, -0.2)
+            
+            # 如果最小值大于0，可以从0开始
+            if min(valid_values) >= 0:
+                x_min = min(x_min, 0)
+            
+            # x_max至少到1，如果有大于1的值则扩展
+            x_max = max(x_max, 1.05)
+            
+            # 如果最大值小于1，可以扩展到1
+            if max(valid_values) <= 1:
+                x_max = max(x_max, 1)
+    
     # 绘制数据点和误差棒
     for i, row in source_df.iterrows():
         a_star = row['自旋值i']
+        
+        # 跳过无效的自旋值
+        if pd.isna(a_star) or np.isinf(a_star):
+            print(f"  警告: 跳过无效数据点 {a_star}")
+            continue
+            
         error_min = row['自旋值i -']
         error_max = row['自旋值i +']
         model = row['拟合模型']
         color = color_map.get(model, other_color)
         
-        if has_valid_error(error_min, error_max):
-            xerr = [[error_min], [error_max]]
-            ax.errorbar(a_star, i, xerr=xerr, fmt='o', color=color,
-                       capsize=5, markersize=10, elinewidth=2,
-                       ecolor=color, markeredgecolor=color, markerfacecolor=color)
-        else:
+        try:
+            if has_valid_error(error_min, error_max):
+                xerr = [[error_min], [error_max]]
+                ax.errorbar(a_star, i, xerr=xerr, fmt='o', color=color,
+                           capsize=5, markersize=10, elinewidth=2,
+                           ecolor=color, markeredgecolor=color, markerfacecolor=color)
+            else:
+                ax.plot(a_star, i, 'o', color=color, markersize=10)
+        except Exception as e:
+            print(f"  警告: 绘制数据点失败: {e}")
             ax.plot(a_star, i, 'o', color=color, markersize=10)
     
     # 添加标注
     for i, row in source_df.iterrows():
         a_star = row['自旋值i']
+        
+        # 跳过无效的自旋值
+        if pd.isna(a_star) or np.isinf(a_star):
+            continue
+            
         error_min = row['自旋值i -']
         error_max = row['自旋值i +']
         model = row['拟合模型']
@@ -148,12 +241,17 @@ def plot_single_source(source_df, source_name, output_dir):
         color = color_map.get(row['拟合模型'], other_color)
         
         # 数值标签
-        if has_valid_error(error_min, error_max):
-            upper_text = f"{a_star:.3f}$^{{+{error_max:.3f}}}_{{-{error_min:.3f}}}$"
-        else:
+        try:
+            if has_valid_error(error_min, error_max):
+                upper_text = f"{a_star:.3f}$^{{+{error_max:.3f}}}_{{-{error_min:.3f}}}$"
+            else:
+                upper_text = f"{a_star:.3f}"
+            ax.text(a_star, i + 0.2, upper_text, fontsize=11, va='bottom', ha='center',
+                    color=color, fontweight='bold')
+        except:
             upper_text = f"{a_star:.3f}"
-        ax.text(a_star, i + 0.2, upper_text, fontsize=11, va='bottom', ha='center',
-                color=color, fontweight='bold')
+            ax.text(a_star, i + 0.2, upper_text, fontsize=11, va='bottom', ha='center',
+                    color=color, fontweight='bold')
         
         # 文献标签
         lower_text = f"{model} {burst_year} {author} ({lit_year})"
@@ -165,7 +263,12 @@ def plot_single_source(source_df, source_name, output_dir):
     ax.set_ylim(y_min, y_max)
     
     # 设置 x 轴
-    ax.set_xlim(0, 1.05)   # 用户指定从 0 开始
+    try:
+        ax.set_xlim(x_min, x_max)
+    except ValueError as e:
+        print(f"  错误: 设置x轴范围失败 {x_min} 到 {x_max}: {e}")
+        ax.set_xlim(0, 1.05)
+    
     ax.set_xlabel(r'$a_*$', fontsize=16, ha='center', fontweight='bold')
     ax.grid(axis='x', linestyle='--', alpha=0.5, linewidth=0.8)
     
@@ -173,11 +276,15 @@ def plot_single_source(source_df, source_name, output_dir):
     ax.set_title(source_name, fontsize=16, fontweight='bold')
     ax.tick_params(axis='x', labelsize=12)
     
+    # 添加一条参考线在 x=0 处（如果x_min < 0）
+    if x_min < 0:
+        ax.axvline(x=0, color='black', linestyle=':', linewidth=0.8, alpha=0.5)
+    
     # 为左侧标签预留空间
     plt.subplots_adjust(left=0.2)
     plt.tight_layout()
     
-    # 保存图片（文件名只包含源名称，特殊字符替换为下划线）
+    # 保存图片
     safe_name = source_name.replace('/', '_').replace('\\', '_').replace(' ', '_').replace('\n', '_')
     output_path = os.path.join(output_dir, f'{safe_name}.png')
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
@@ -185,10 +292,27 @@ def plot_single_source(source_df, source_name, output_dir):
     print(f"已生成: {safe_name}.png ({len(source_df)} 个数据点)")
 
 def main():
+    import os
+    
+    # 获取脚本所在目录和项目根目录
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)  # scripts的上一级
+    
     # 读取数据
     print("正在读取数据...")
-    df = pd.read_excel('data/数据收集 表3.xlsx', sheet_name='Sheet1')
-    print(f"成功读取 {len(df)} 行数据")
+    data_path = os.path.join(project_root, 'data', '数据收集 表3.xlsx')
+    print(f"数据文件路径: {data_path}")
+    
+    try:
+        df = pd.read_excel(data_path, sheet_name='Sheet1')
+        print(f"成功读取 {len(df)} 行数据")
+    except FileNotFoundError:
+        print(f"错误: 找不到数据文件 {data_path}")
+        print("请确保 data/数据收集 表3.xlsx 文件存在")
+        return
+    except Exception as e:
+        print(f"读取数据文件失败: {e}")
+        return
     
     # 清洗：向前填充黑洞名称
     df['源'] = df['源'].ffill()
@@ -199,9 +323,10 @@ def main():
     sources = df['源'].unique()
     print(f"共发现 {len(sources)} 个黑洞")
     
-    # 创建输出目录
-    output_dir = 'output'
+    # 创建输出目录（在项目根目录）
+    output_dir = os.path.join(project_root, 'output')
     os.makedirs(output_dir, exist_ok=True)
+    print(f"输出目录: {output_dir}")
     
     # 逐个黑洞绘图
     for i, source in enumerate(sources, 1):
