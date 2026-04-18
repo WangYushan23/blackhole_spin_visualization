@@ -74,14 +74,21 @@ def format_burst_year(year_str):
     return year_str
 
 def has_valid_error(error_min, error_max):
-    """判断误差是否有效"""
+    """判断误差是否有效，并返回误差类型"""
+    # 处理范围值（如 <0.8）
+    if pd.isna(error_min) and error_max == 0:
+        return 'less_than'
+    # 处理范围值（如 >0.9）
+    if error_min == 0 and pd.isna(error_max):
+        return 'greater_than'
+    # 正常误差
     if pd.isna(error_min) or pd.isna(error_max):
         return False
     if np.isinf(error_min) or np.isinf(error_max):
         return False
     if error_min == 0 and error_max == 0:
         return False
-    return True
+    return 'normal'
 
 def prepare_source_df(df, source_name):
     """为指定黑洞准备并排序数据"""
@@ -112,6 +119,25 @@ def prepare_source_df(df, source_name):
     source_df = source_df.loc[sorted_indices].reset_index(drop=True)
     return source_df
 
+def get_label_position(ax, x_data, y_data, x_min, x_max, color):
+    """智能计算标签位置，避免遮挡"""
+    # 获取当前 x 轴范围
+    x_range = x_max - x_min
+    
+    # 检查右侧是否有空间
+    right_space = x_max - x_data
+    left_space = x_data - x_min
+    
+    # 默认尝试放在右侧
+    if right_space > x_range * 0.15:  # 右侧有15%空间
+        return x_data + x_range * 0.05, 'left'
+    # 否则放在左侧
+    elif left_space > x_range * 0.15:
+        return x_data - x_range * 0.08, 'right'
+    else:
+        # 空间都不足，放在数据点上方
+        return x_data, 'center'
+
 def plot_single_source(source_df, source_name, output_dir):
     """绘制单个黑洞的图表"""
     n_points = len(source_df)
@@ -120,7 +146,7 @@ def plot_single_source(source_df, source_name, output_dir):
     
     fig, ax = plt.subplots(figsize=(14, max(7, n_points * 0.8)))
     
-    # 绘制数据点和误差棒
+    # 第一遍：绘制数据点和误差棒
     for i, row in source_df.iterrows():
         a_star = row['自旋值i']
         error_min = row['自旋值i -']
@@ -128,15 +154,65 @@ def plot_single_source(source_df, source_name, output_dir):
         model = row['拟合模型']
         color = color_map.get(model, other_color)
         
-        if has_valid_error(error_min, error_max):
+        error_type = has_valid_error(error_min, error_max)
+        
+        if error_type == 'normal':
+            # 正常误差棒
             xerr = [[error_min], [error_max]]
             ax.errorbar(a_star, i, xerr=xerr, fmt='o', color=color,
                        capsize=5, markersize=10, elinewidth=2,
                        ecolor=color, markeredgecolor=color, markerfacecolor=color)
+        elif error_type == 'less_than':
+            # 向左箭头：从 a_star-0.15 到 a_star
+            ax.arrow(a_star - 0.15, i, 0.13, 0, 
+                    head_width=0.2, head_length=0.03, 
+                    fc=color, ec=color, alpha=0.8, linewidth=2)
+            ax.plot(a_star, i, 'o', color=color, markersize=10)
+        elif error_type == 'greater_than':
+            # 向右箭头：从 a_star 到 a_star+0.15
+            ax.arrow(a_star, i, 0.13, 0, 
+                    head_width=0.2, head_length=0.03, 
+                    fc=color, ec=color, alpha=0.8, linewidth=2)
+            ax.plot(a_star, i, 'o', color=color, markersize=10)
         else:
+            # 无误差，仅画点
             ax.plot(a_star, i, 'o', color=color, markersize=10)
     
-    # 添加标注
+    # 计算 x 轴范围
+    all_values = []
+    for i, row in source_df.iterrows():
+        a_star = row['自旋值i']
+        error_min = row['自旋值i -']
+        error_max = row['自旋值i +']
+        error_type = has_valid_error(error_min, error_max)
+        
+        all_values.append(a_star)
+        
+        if error_type == 'normal':
+            if not pd.isna(error_min) and not np.isinf(error_min):
+                all_values.append(a_star - error_min)
+            if not pd.isna(error_max) and not np.isinf(error_max):
+                all_values.append(a_star + error_max)
+        elif error_type == 'less_than':
+            all_values.append(a_star - 0.2)  # 箭头向左延伸
+        elif error_type == 'greater_than':
+            all_values.append(a_star + 0.2)  # 箭头向右延伸
+    
+    min_val = min(all_values)
+    max_val = max(all_values)
+    
+    # 判断是否需要扩展到负数
+    if min_val < 0:
+        x_min = -1.05  # 扩展到 -1 并留余量
+    else:
+        x_min = 0
+    
+    x_max = max(1.05, max_val + 0.1)
+    
+    # 设置 x 轴
+    ax.set_xlim(x_min, x_max)
+    
+    # 第二遍：添加标注（数值标签和文献标签）
     for i, row in source_df.iterrows():
         a_star = row['自旋值i']
         error_min = row['自旋值i -']
@@ -147,25 +223,41 @@ def plot_single_source(source_df, source_name, output_dir):
         lit_year = row['lit_year_str']
         color = color_map.get(row['拟合模型'], other_color)
         
+        error_type = has_valid_error(error_min, error_max)
+        
         # 数值标签
-        if has_valid_error(error_min, error_max):
+        if error_type == 'less_than':
+            upper_text = f"<{a_star:.3f}"
+        elif error_type == 'greater_than':
+            upper_text = f">{a_star:.3f}"
+        elif error_type == 'normal':
             upper_text = f"{a_star:.3f}$^{{+{error_max:.3f}}}_{{-{error_min:.3f}}}$"
         else:
             upper_text = f"{a_star:.3f}"
+        
         ax.text(a_star, i + 0.2, upper_text, fontsize=11, va='bottom', ha='center',
                 color=color, fontweight='bold')
         
-        # 文献标签
+        # 文献标签 - 智能定位
+        x_pos, ha = get_label_position(ax, a_star, i, x_min, x_max, color)
         lower_text = f"{model} {burst_year} {author} ({lit_year})"
-        ax.text(-0.08, i, lower_text, fontsize=11, va='center', ha='right',
-                color=color, alpha=0.9)
+        
+        # 检查是否与数据点重叠（简单的 y 轴调整）
+        y_offset = 0
+        # 检查上方是否有其他标签
+        for other_i in range(i-1, max(-1, i-3), -1):
+            if other_i >= 0:
+                y_offset += 0.15
+        
+        ax.text(x_pos, i - 0.2 - y_offset, lower_text, fontsize=10, 
+                va='top', ha=ha, color=color, alpha=0.9,
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7))
     
     # 隐藏 y 轴
     ax.set_yticks([])
     ax.set_ylim(y_min, y_max)
     
-    # 设置 x 轴
-    ax.set_xlim(0, 1.05)   # 用户指定从 0 开始
+    # 设置 x 轴标签和网格
     ax.set_xlabel(r'$a_*$', fontsize=16, ha='center', fontweight='bold')
     ax.grid(axis='x', linestyle='--', alpha=0.5, linewidth=0.8)
     
@@ -187,7 +279,7 @@ def plot_single_source(source_df, source_name, output_dir):
 def main():
     # 读取数据
     print("正在读取数据...")
-    df = pd.read_excel('data/数据收集 表3.xlsx', sheet_name='Sheet1')
+    df = pd.read_excel('data/数据收集 表3 画图用.xlsx', sheet_name='Sheet1')
     print(f"成功读取 {len(df)} 行数据")
     
     # 清洗：向前填充黑洞名称

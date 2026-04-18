@@ -10,14 +10,14 @@ plt.rcParams['axes.unicode_minus'] = False
 
 # 读取数据
 print("正在读取数据...")
-df = pd.read_excel('data/数据收集 表3.xlsx', sheet_name='Sheet1')
+df = pd.read_excel('data/数据收集 表3 画图用.xlsx', sheet_name='Sheet1')
 print(f"成功读取 {len(df)} 行数据")
 
 # 清洗数据：向前填充黑洞名称
 df['源'] = df['源'].ffill()
 df = df.dropna(subset=['源'])
 
-# 获取指定黑洞
+# 获取指定黑洞（可以修改为你想测试的黑洞名称）
 first_source = '4U 1543-475'
 source_df = df[df['源'] == first_source].copy()
 source_df = source_df.reset_index(drop=True)
@@ -138,7 +138,7 @@ y_max = n_points - 0.5
 # 创建图形（放大图片尺寸）
 fig, ax = plt.subplots(figsize=(14, max(7, n_points * 0.8)))
 
-# 绘制每个数据点
+# 第一遍：绘制数据点和误差棒
 for i, row in source_df.iterrows():
     a_star = row['自旋值i']
     error_min = row['自旋值i -']
@@ -163,6 +163,34 @@ for i, row in source_df.iterrows():
     else:
         ax.plot(a_star, i, 'o', color=color, markersize=10)
 
+# 计算 x 轴范围（自动识别是否需要扩展到负数）
+all_values = []
+for i, row in source_df.iterrows():
+    a_star = row['自旋值i']
+    error_min = row['自旋值i -']
+    error_max = row['自旋值i +']
+    
+    all_values.append(a_star)
+    
+    if not pd.isna(error_min) and not np.isinf(error_min) and error_min > 0:
+        all_values.append(a_star - error_min)
+    if not pd.isna(error_max) and not np.isinf(error_max) and error_max > 0:
+        all_values.append(a_star + error_max)
+
+min_val = min(all_values)
+max_val = max(all_values)
+
+# 判断是否需要扩展到负数
+if min_val < 0:
+    x_min = -1.05
+else:
+    x_min = 0
+
+x_max = max(1.05, max_val + 0.1)
+
+# 设置 x 轴
+ax.set_xlim(x_min, x_max)
+
 # 添加标注
 for i, row in source_df.iterrows():
     a_star = row['自旋值i']
@@ -183,30 +211,47 @@ for i, row in source_df.iterrows():
     else:
         upper_text = f"{a_star:.3f}"
     
-    # 左侧标签：模型 爆发年份 作者 (年份)
+    # 文献标签
     lower_text = f"{model} {burst_year} {author} ({lit_year})"
     
     # 数值标签放在点正上方（垂直偏移0.2）
     ax.text(a_star, i + 0.2, upper_text, fontsize=11, va='bottom', ha='center', 
             color=color, fontweight='bold')
     
-    # 文献标签放在点左侧（x坐标调整为 -0.08，配合左侧空间）
-    ax.text(-0.08, i, lower_text, fontsize=11, va='center', ha='right', 
-            color=color, alpha=0.9)
+    # 【修改1】文献标签：移除黑色边框（edgecolor='none'）
+    # 【修改2】减小与数据点的距离：将 i - 0.2 改为 i - 0.35，字体改为9号
+    # 同时智能判断标签位置，优先放在右侧避免遮挡
+    x_range = x_max - x_min
+    right_space = x_max - a_star
+    left_space = a_star - x_min
+    
+    # 优先放在右侧
+    if right_space > x_range * 0.15:
+        x_pos = a_star + x_range * 0.05
+        ha = 'left'
+        y_offset = 0  # 右侧不需要垂直偏移
+    elif left_space > x_range * 0.15:
+        x_pos = a_star - x_range * 0.08
+        ha = 'right'
+        y_offset = 0
+    else:
+        x_pos = a_star
+        ha = 'center'
+        y_offset = -0.15
+    
+    ax.text(x_pos, i - 0.35 + y_offset, lower_text, fontsize=9, 
+            va='top', ha=ha, color=color, alpha=0.9,
+            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7, edgecolor='none'))
 
 # 完全隐藏 y 轴（刻度线和刻度标签）
 ax.set_yticks([])
 ax.set_ylim(y_min, y_max)
 
-# 设置 x 轴（范围 0-1）
-ax.set_xlim(0.0, 1.0)
-ax.set_xlabel(r'$a_*$', fontsize=16, ha='center', fontweight='bold')
+# 【修改3】修复 x 轴标签被截断问题
+ax.set_xlabel(r'$a_*$', fontsize=16, ha='center', fontweight='bold', labelpad=10)
 
 # 添加网格
 ax.grid(axis='x', linestyle='--', alpha=0.5, linewidth=0.8)
-
-# 调整 x 轴左边界，为左侧标签预留更多空间
-ax.set_xlim(0, 1.05)
 
 # 设置标题为源名称
 ax.set_title(first_source, fontsize=16, fontweight='bold')
@@ -214,10 +259,8 @@ ax.set_title(first_source, fontsize=16, fontweight='bold')
 # 设置坐标轴刻度字体大小
 ax.tick_params(axis='x', labelsize=12)
 
-# 为左侧标签预留更多空间（关键调整）
-plt.subplots_adjust(left=0.2)
-
-plt.tight_layout()
+# 【修改3】调整底部边距，确保 x 轴标签完整显示
+plt.subplots_adjust(left=0.2, bottom=0.15)
 
 # 保存图片
 os.makedirs('output', exist_ok=True)
