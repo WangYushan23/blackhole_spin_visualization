@@ -29,29 +29,55 @@ def get_error_type(error_min, error_max):
         return 'greater_than'
     return 'normal'
 
-def get_x_error(a_star, error_min, error_max, error_type):
-    """计算 x 方向的误差范围"""
+def get_x_bounds(a_star, error_min, error_max, error_type):
+    """计算 x 方向的边界（左边界，右边界）"""
     if error_type == 'normal':
-        return error_min, error_max
+        if pd.isna(error_min) or np.isinf(error_min):
+            left = a_star
+        else:
+            left = a_star - error_min
+        if pd.isna(error_max) or np.isinf(error_max):
+            right = a_star
+        else:
+            right = a_star + error_max
     elif error_type == 'less_than':
         # < 类型：向左延伸到 -1
-        return a_star - (-1), 0
+        left = -1
+        right = a_star
     elif error_type == 'greater_than':
         # > 类型：向右延伸到 1
-        return 0, 1 - a_star
-    return 0, 0
+        left = a_star
+        right = 1
+    else:
+        left = a_star
+        right = a_star
+    
+    return left, right
 
-def get_y_error(i_value, error_min, error_max, error_type, y_min_val=0, y_max_val=90):
-    """计算 y 方向的误差范围"""
+def get_y_bounds(y_value, error_min, error_max, error_type, y_min_val=0, y_max_val=90):
+    """计算 y 方向的边界（下边界，上边界）"""
     if error_type == 'normal':
-        return error_min, error_max
+        if pd.isna(error_min) or np.isinf(error_min):
+            bottom = y_value
+        else:
+            bottom = y_value - error_min
+        if pd.isna(error_max) or np.isinf(error_max):
+            top = y_value
+        else:
+            top = y_value + error_max
     elif error_type == 'less_than':
         # < 类型：向下延伸到 y_min_val
-        return i_value - y_min_val, 0
+        bottom = y_min_val
+        top = y_value
     elif error_type == 'greater_than':
         # > 类型：向上延伸到 y_max_val
-        return 0, y_max_val - i_value
-    return 0, 0
+        bottom = y_value
+        top = y_max_val
+    else:
+        bottom = y_value
+        top = y_value
+    
+    return bottom, top
 
 # 读取数据
 print("正在读取数据...")
@@ -99,9 +125,12 @@ source_color_map = {source: colors[i] for i, source in enumerate(sources)}
 
 # 创建图形（第一张图：自旋值 vs 倾角）
 print("\n正在绘制第一张图：自旋值 vs 倾角...")
-fig1, ax1 = plt.subplots(figsize=(12, 8))
+fig1, ax1 = plt.subplots(figsize=(14, 10))
 
-# 绘制数据点
+# 存储所有矩形的 zorder，用于控制绘制顺序
+rectangles = []
+
+# 绘制数据点（先收集所有矩形信息）
 for source in sources:
     source_df = df[df['源'] == source]
     color = source_color_map[source]
@@ -118,54 +147,25 @@ for source in sources:
         a_error_type = get_error_type(a_err_min, a_err_max)
         i_error_type = get_error_type(i_err_min, i_err_max)
         
-        # 检查是否是最后一行（正方形标记）
-        is_last_row = (idx == df.index[-1])
+        # 计算边界
+        x_left, x_right = get_x_bounds(a_star, a_err_min, a_err_max, a_error_type)
+        y_bottom, y_top = get_y_bounds(i_value, i_err_min, i_err_max, i_error_type, y_min_val=0, y_max_val=90)
         
-        if is_last_row:
-            # 最后一行数据：绘制正方形（矩形）
-            # 计算正方形的边界
-            if a_error_type == 'normal':
-                a_left = a_star - a_err_min
-                a_right = a_star + a_err_max
-            elif a_error_type == 'less_than':
-                a_left = -1
-                a_right = a_star
-            elif a_error_type == 'greater_than':
-                a_left = a_star
-                a_right = 1
-            else:
-                a_left = a_star
-                a_right = a_star
-            
-            if i_error_type == 'normal':
-                i_bottom = i_value - i_err_min
-                i_top = i_value + i_err_max
-            elif i_error_type == 'less_than':
-                i_bottom = 0
-                i_top = i_value
-            elif i_error_type == 'greater_than':
-                i_bottom = i_value
-                i_top = 90
-            else:
-                i_bottom = i_value
-                i_top = i_value
-            
-            # 绘制矩形
-            rect = plt.Rectangle((a_left, i_bottom), a_right - a_left, i_top - i_bottom,
-                                 fill=True, alpha=0.3, color=color, linewidth=1.5, edgecolor=color)
+        # 确保边界有效
+        width = x_right - x_left
+        height = y_top - y_bottom
+        
+        if width > 0 and height > 0:
+            # 绘制填充矩形（长方形/正方形）
+            rect = plt.Rectangle((x_left, y_bottom), width, height,
+                                 fill=True, alpha=0.4, color=color, 
+                                 linewidth=1, edgecolor=color, linestyle='-')
             ax1.add_patch(rect)
-            # 绘制中心点
-            ax1.scatter(a_star, i_value, color=color, s=80, marker='s', zorder=5)
-        else:
-            # 普通数据：绘制误差棒
-            xerr = get_x_error(a_star, a_err_min, a_err_max, a_error_type)
-            yerr = get_y_error(i_value, i_err_min, i_err_max, i_error_type, y_min_val=0, y_max_val=90)
-            
-            ax1.errorbar(a_star, i_value, 
-                        xerr=[[xerr[0]], [xerr[1]]],
-                        yerr=[[yerr[0]], [yerr[1]]],
-                        fmt='o', color=color, capsize=5, markersize=8,
-                        alpha=0.7, elinewidth=1.5, capthick=1.5)
+            rectangles.append((rect, color, a_star, i_value, width, height))
+        
+        # 绘制中心点
+        ax1.scatter(a_star, i_value, color=color, s=50, marker='o', 
+                   zorder=5, edgecolor='black', linewidth=0.5)
 
 # 设置坐标轴范围
 ax1.set_xlim(-1.1, 1.1)
