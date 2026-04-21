@@ -53,9 +53,25 @@ def sample_from_distribution(mean, error_min, error_max, n_samples):
     
     return samples
 
-def simulate_source(source_df, source_name, total_samples=1000):
+def calculate_weights(source_df, confidence_col='自旋值i 置信度(σ)', default_weight=1.0):
     """
-    对单个源进行蒙特卡洛模拟
+    根据置信度计算每条记录的抽样权重
+    缺失置信度的数据使用默认权重 1
+    """
+    # 获取置信度列
+    confidences = source_df[confidence_col].values
+    
+    # 处理缺失值：将 NaN 替换为默认权重
+    confidences = np.array([default_weight if pd.isna(c) else c for c in confidences])
+    
+    # 确保权重为正数
+    confidences = np.maximum(confidences, 0.01)
+    
+    return confidences
+
+def simulate_source_weighted(source_df, source_name, total_samples=1000):
+    """
+    加权蒙特卡洛模拟（考虑置信度）
     返回字典：{'all': samples, 'reflection': samples, ...}
     """
     # 定义四种模拟类型
@@ -87,25 +103,33 @@ def simulate_source(source_df, source_name, total_samples=1000):
             results[sim_name] = np.array([])
             continue
         
-        # 计算每条记录的抽样数量（等权重）
-        n_records = len(valid_df)
-        samples_per_record = total_samples // n_records
-        remainder = total_samples % n_records
+        # 计算每条记录的权重（基于置信度）
+        weights = calculate_weights(valid_df, confidence_col='自旋值i 置信度(σ)', default_weight=1.0)
+        
+        # 归一化权重，计算每条记录的抽样数量
+        sample_counts = (weights / weights.sum() * total_samples).astype(int)
+        
+        # 处理取整误差：将剩余样本分配给权重最大的记录
+        remainder = total_samples - sample_counts.sum()
+        if remainder > 0:
+            # 找到权重最大的记录（如果有多个，取第一个）
+            max_idx = np.argmax(weights)
+            sample_counts[max_idx] += remainder
         
         # 存储所有抽样结果
         all_samples = []
         
         for idx, (_, row) in enumerate(valid_df.iterrows()):
+            n = sample_counts[idx]
+            if n <= 0:
+                continue
+            
             mean = row['自旋值i']
             error_min = row['自旋值i -']
             error_max = row['自旋值i +']
             
-            # 前 remainder 条记录多抽一个样本
-            n = samples_per_record + (1 if idx < remainder else 0)
-            
-            if n > 0:
-                samples = sample_from_distribution(mean, error_min, error_max, n)
-                all_samples.extend(samples)
+            samples = sample_from_distribution(mean, error_min, error_max, n)
+            all_samples.extend(samples)
         
         results[sim_name] = np.array(all_samples)
     
@@ -116,7 +140,11 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 # 数据文件路径：从 scripts 文件夹向上两级到根目录，再进入 data 文件夹
 file_path = os.path.join(script_dir, '../../data/数据收集 表3 蒙特卡洛模拟用.xlsx')
 
-print("正在读取数据...")
+print("=" * 60)
+print("蒙特卡洛模拟程序（考虑置信度权重）")
+print("=" * 60)
+
+print("\n正在读取数据...")
 print(f"数据文件路径: {file_path}")
 df = pd.read_excel(file_path, sheet_name='Sheet1')
 print(f"成功读取 {len(df)} 行数据")
@@ -129,6 +157,7 @@ df = df.dropna(subset=['源'])
 df['自旋值i'] = pd.to_numeric(df['自旋值i'], errors='coerce')
 df['自旋值i -'] = pd.to_numeric(df['自旋值i -'], errors='coerce')
 df['自旋值i +'] = pd.to_numeric(df['自旋值i +'], errors='coerce')
+df['自旋值i 置信度(σ)'] = pd.to_numeric(df['自旋值i 置信度(σ)'], errors='coerce')
 
 # 删除自旋值为空的行
 df = df.dropna(subset=['自旋值i'])
@@ -146,17 +175,24 @@ os.makedirs(output_dir, exist_ok=True)
 
 # 对每个源进行模拟
 print("\n开始蒙特卡洛模拟...")
-print(f"每个源每次模拟抽样 {TOTAL_SAMPLES} 个点\n")
+print(f"每个源每次模拟抽样 {TOTAL_SAMPLES} 个点")
+print("权重分配：基于置信度（缺失置信度默认权重为 1）\n")
 
 for source in sources:
     print(f"处理黑洞: {source}")
     source_df = df[df['源'] == source].copy()
     
+    # 显示该源的置信度信息（用于调试）
+    conf_values = source_df['自旋值i 置信度(σ)'].values
+    n_missing = sum(1 for c in conf_values if pd.isna(c))
+    if n_missing > 0:
+        print(f"  注意: 有 {n_missing} 条记录置信度缺失，使用默认权重 1")
+    
     # 模拟
-    results = simulate_source(source_df, source, TOTAL_SAMPLES)
+    results = simulate_source_weighted(source_df, source, TOTAL_SAMPLES)
     
     # 保存结果到 CSV 文件
-    safe_name = source.replace('/', '_').replace('\\', '_').replace(' ', '_').replace('\n', '_')
+    safe_name = source.replace('/', '_').replace('\\', '_').replace(' ', '_').replace('\n', '_').replace(' ', '')
     
     for sim_type, samples in results.items():
         if len(samples) == 0:
@@ -177,17 +213,17 @@ for source in sources:
     
     print()
 
-print("\n" + "="*50)
+print("\n" + "=" * 60)
 print("蒙特卡洛模拟完成！")
 print(f"结果保存在: {os.path.abspath(output_dir)}")
-print("="*50)
+print("=" * 60)
 
 # 生成汇总统计
 print("\n生成汇总统计...")
 
 summary_data = []
 for source in sources:
-    safe_name = source.replace('/', '_').replace('\\', '_').replace(' ', '_').replace('\n', '_')
+    safe_name = source.replace('/', '_').replace('\\', '_').replace(' ', '_').replace('\n', '_').replace(' ', '')
     
     for sim_type in ['all', 'reflection', 'continuum-fitting', 'combining']:
         filename = f"{safe_name}_{sim_type}.csv"
@@ -197,24 +233,49 @@ for source in sources:
             df_sample = pd.read_csv(filepath)
             samples = df_sample['模拟值']
             
+            # 计算统计量
+            mean_val = samples.mean()
+            median_val = samples.median()
+            std_val = samples.std()
+            min_val = samples.min()
+            max_val = samples.max()
+            p5 = np.percentile(samples, 5)
+            p95 = np.percentile(samples, 95)
+            ci_lower = np.percentile(samples, 2.5)
+            ci_upper = np.percentile(samples, 97.5)
+            
             summary_data.append({
                 '源': source,
                 '模拟类型': sim_type,
                 '样本数': len(samples),
-                '均值': samples.mean(),
-                '中位数': samples.median(),
-                '标准差': samples.std(),
-                '最小值': samples.min(),
-                '最大值': samples.max(),
-                '5%分位数': np.percentile(samples, 5),
-                '95%分位数': np.percentile(samples, 95),
-                '95%置信区间下限': np.percentile(samples, 2.5),
-                '95%置信区间上限': np.percentile(samples, 97.5)
+                '均值': mean_val,
+                '中位数': median_val,
+                '标准差': std_val,
+                '最小值': min_val,
+                '最大值': max_val,
+                '5%分位数': p5,
+                '95%分位数': p95,
+                '95%置信区间下限': ci_lower,
+                '95%置信区间上限': ci_upper
             })
 
 summary_df = pd.DataFrame(summary_data)
 summary_path = os.path.join(output_dir, '汇总统计.csv')
 summary_df.to_csv(summary_path, index=False, encoding='utf-8-sig')
 print(f"✓ 汇总统计已保存: 汇总统计.csv")
+
+# 额外生成一个权重分配说明文件
+weight_info = pd.DataFrame({
+    '说明': [
+        '本模拟采用加权蒙特卡洛方法',
+        '权重依据：自旋值i 置信度(σ) 列',
+        '缺失置信度的数据使用默认权重 1',
+        '每个源每种模拟类型总抽样数: 1000',
+        '抽样数量与置信度成正比（置信度越高，抽样越多）'
+    ]
+})
+weight_info_path = os.path.join(output_dir, '权重分配说明.csv')
+weight_info.to_csv(weight_info_path, index=False, encoding='utf-8-sig')
+print(f"✓ 权重分配说明已保存: 权重分配说明.csv")
 
 print("\n全部完成！")
