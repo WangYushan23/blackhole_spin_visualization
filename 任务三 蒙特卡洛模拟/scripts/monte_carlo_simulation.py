@@ -1,281 +1,233 @@
-import pandas as pd
-import numpy as np
-import os
+"""
+黑洞自旋值蒙特卡洛模拟
+功能：对不同文献的黑洞自旋测量值进行高斯抽样，生成统计分布图
+作者：黑洞研究专家
+日期：2026-04-25
+"""
 
-# 设置随机种子，确保结果可重复
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from math import lcm
+from pathlib import Path
+import shutil
+import warnings
+warnings.filterwarnings('ignore')
+
+# ==================== 设置中文字体 ====================
+plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+plt.rcParams['axes.unicode_minus'] = False
+
+# ==================== 配置参数 ====================
+BASE_MULTIPLIER = 100
+BINS = np.arange(-1.0, 1.01, 0.1)
+CONF_TO_Z = {1.0: 1.0, 1.645: 1.645, 2.576: 2.576, 3.0: 3.0}
+
 np.random.seed(42)
 
-def is_range_value(error_min, error_max):
-    """判断是否为范围值（如 <0.8 或 >0.9）"""
-    def is_nan(val):
-        if val is None:
-            return True
-        if isinstance(val, float) and np.isnan(val):
-            return True
-        if pd.isna(val):
-            return True
-        return False
-    
-    is_min_nan = is_nan(error_min)
-    is_max_nan = is_nan(error_max)
-    
-    # 范围值：< 类型 或 > 类型
-    if is_min_nan and (error_max == 0 or is_max_nan):
-        return True
-    if is_max_nan and (error_min == 0 or is_min_nan):
-        return True
-    return False
+# ==================== 路径设置 ====================
+SCRIPT_DIR = Path(__file__).parent
+PROJECT_ROOT = SCRIPT_DIR.parent.parent
+DATA_PATH = PROJECT_ROOT / 'data' / '数据收集 表3 蒙特卡洛模拟用.xlsx'
+OUTPUT_DIR = SCRIPT_DIR.parent / 'output'
 
-def sample_from_distribution(mean, error_min, error_max, n_samples):
-    """
-    从给定分布中抽样
-    使用正态分布，误差范围作为 1-sigma 范围
-    """
-    # 计算标准差（不对称误差取平均）
-    if not pd.isna(error_min) and not pd.isna(error_max):
-        sigma = (abs(error_min) + abs(error_max)) / 2
-    elif not pd.isna(error_min):
-        sigma = abs(error_min)
-    elif not pd.isna(error_max):
-        sigma = abs(error_max)
-    else:
-        sigma = abs(mean) * 0.1
-    
-    # 避免 sigma 为 0
-    if sigma == 0:
-        sigma = 0.01
-    
-    # 从正态分布抽样
-    samples = np.random.normal(mean, sigma, n_samples)
-    
-    # 截断到 [-1, 1] 范围（自旋值的物理范围）
-    samples = np.clip(samples, -1, 1)
-    
-    return samples
+# ==================== 清理旧的输出文件 ====================
+if OUTPUT_DIR.exists():
+    print(f"检测到旧的输出文件夹，正在清理...")
+    shutil.rmtree(OUTPUT_DIR)
+    print(f"已清理旧文件")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+print(f"已创建新的输出文件夹: {OUTPUT_DIR}\n")
 
-def calculate_weights(source_df, confidence_col='自旋值i 置信度(σ)', default_weight=1.0):
-    """
-    根据置信度计算每条记录的抽样权重
-    缺失置信度的数据使用默认权重 1
-    """
-    # 获取置信度列
-    confidences = source_df[confidence_col].values
-    
-    # 处理缺失值：将 NaN 替换为默认权重
-    confidences = np.array([default_weight if pd.isna(c) else c for c in confidences])
-    
-    # 确保权重为正数
-    confidences = np.maximum(confidences, 0.01)
-    
-    return confidences
+print(f"数据文件路径: {DATA_PATH}")
+print(f"数据文件存在: {DATA_PATH.exists()}")
 
-def simulate_source_weighted(source_df, source_name, total_samples=1000):
-    """
-    加权蒙特卡洛模拟（考虑置信度）
-    返回字典：{'all': samples, 'reflection': samples, ...}
-    """
-    # 定义四种模拟类型
-    simulation_types = {
-        'all': source_df,  # 所有数据
-        'reflection': source_df[source_df['拟合模型'] == 'reflection'],
-        'continuum-fitting': source_df[source_df['拟合模型'] == 'continuum-fitting'],
-        'combining': source_df[source_df['拟合模型'] == 'combining']
-    }
-    
-    results = {}
-    
-    for sim_name, sim_df in simulation_types.items():
-        if len(sim_df) == 0:
-            print(f"  警告: {source_name} 没有 {sim_name} 类型的数据，跳过")
-            results[sim_name] = np.array([])
-            continue
-        
-        # 过滤掉范围值（< 或 > 类型）
-        valid_df = sim_df.copy()
-        valid_df['is_range'] = valid_df.apply(
-            lambda row: is_range_value(row['自旋值i -'], row['自旋值i +']), 
-            axis=1
-        )
-        valid_df = valid_df[~valid_df['is_range']]
-        
-        if len(valid_df) == 0:
-            print(f"  警告: {source_name} 的 {sim_name} 类型数据全是范围值，跳过")
-            results[sim_name] = np.array([])
-            continue
-        
-        # 计算每条记录的权重（基于置信度）
-        weights = calculate_weights(valid_df, confidence_col='自旋值i 置信度(σ)', default_weight=1.0)
-        
-        # 归一化权重，计算每条记录的抽样数量
-        sample_counts = (weights / weights.sum() * total_samples).astype(int)
-        
-        # 处理取整误差：将剩余样本分配给权重最大的记录
-        remainder = total_samples - sample_counts.sum()
-        if remainder > 0:
-            # 找到权重最大的记录（如果有多个，取第一个）
-            max_idx = np.argmax(weights)
-            sample_counts[max_idx] += remainder
-        
-        # 存储所有抽样结果
-        all_samples = []
-        
-        for idx, (_, row) in enumerate(valid_df.iterrows()):
-            n = sample_counts[idx]
-            if n <= 0:
-                continue
-            
-            mean = row['自旋值i']
-            error_min = row['自旋值i -']
-            error_max = row['自旋值i +']
-            
-            samples = sample_from_distribution(mean, error_min, error_max, n)
-            all_samples.extend(samples)
-        
-        results[sim_name] = np.array(all_samples)
-    
-    return results
+# ==================== 读取数据 ====================
+if not DATA_PATH.exists():
+    raise FileNotFoundError(f"找不到数据文件: {DATA_PATH}")
 
-# 获取当前脚本所在目录
-script_dir = os.path.dirname(os.path.abspath(__file__))
-# 数据文件路径：从 scripts 文件夹向上两级到根目录，再进入 data 文件夹
-file_path = os.path.join(script_dir, '../../data/数据收集 表3 蒙特卡洛模拟用.xlsx')
-
-print("=" * 60)
-print("蒙特卡洛模拟程序（考虑置信度权重）")
-print("=" * 60)
-
-print("\n正在读取数据...")
-print(f"数据文件路径: {file_path}")
-df = pd.read_excel(file_path, sheet_name='Sheet1')
-print(f"成功读取 {len(df)} 行数据")
-
-# 清洗数据：向前填充黑洞名称
-df['源'] = df['源'].ffill()
-df = df.dropna(subset=['源'])
-
-# 转换数值类型
-df['自旋值i'] = pd.to_numeric(df['自旋值i'], errors='coerce')
-df['自旋值i -'] = pd.to_numeric(df['自旋值i -'], errors='coerce')
-df['自旋值i +'] = pd.to_numeric(df['自旋值i +'], errors='coerce')
-df['自旋值i 置信度(σ)'] = pd.to_numeric(df['自旋值i 置信度(σ)'], errors='coerce')
-
-# 删除自旋值为空的行
+df = pd.read_excel(DATA_PATH, sheet_name='Sheet1', usecols='B:I')
+df.columns = ['源', '文献来源', '自旋值i', '自旋值i-', '自旋值i+', '置信度_sigma', '拟合模型', '爆发时间']
 df = df.dropna(subset=['自旋值i'])
 
-# 获取所有黑洞名称
+print(f"成功读取数据，共 {len(df)} 条记录")
+print(f"黑洞源列表: {df['源'].unique()}")
+print(f"拟合模型类型: {df['拟合模型'].unique()}")
+
+# ==================== 计算 sigma_dist ====================
+def calc_sigma(row):
+    e_min = min(row['自旋值i-'], row['自旋值i+'])
+    k = row['置信度_sigma']
+    z = CONF_TO_Z.get(k, 1.0)
+    return e_min / z
+
+df['sigma_dist'] = df.apply(calc_sigma, axis=1)
+
+print("\nsigma_dist计算示例：")
+print(df[['源', '自旋值i', '自旋值i-', '自旋值i+', '置信度_sigma', 'sigma_dist']].head(10))
+
+# ==================== 计算全局 L_global ====================
 sources = df['源'].unique()
-print(f"共发现 {len(sources)} 个黑洞")
+source_stats = {}
 
-# 设置总抽样数量
-TOTAL_SAMPLES = 1000
-
-# 创建输出目录（在任务三文件夹下的 output）
-output_dir = os.path.join(script_dir, '../output')
-os.makedirs(output_dir, exist_ok=True)
-
-# 对每个源进行模拟
-print("\n开始蒙特卡洛模拟...")
-print(f"每个源每次模拟抽样 {TOTAL_SAMPLES} 个点")
-print("权重分配：基于置信度（缺失置信度默认权重为 1）\n")
-
-for source in sources:
-    print(f"处理黑洞: {source}")
-    source_df = df[df['源'] == source].copy()
+for src in sources:
+    src_df = df[df['源'] == src]
+    n_all = len(src_df)
+    n_cf = len(src_df[src_df['拟合模型'] == 'continuum-fitting'])
+    n_ref = len(src_df[src_df['拟合模型'] == 'reflection'])
     
-    # 显示该源的置信度信息（用于调试）
-    conf_values = source_df['自旋值i 置信度(σ)'].values
-    n_missing = sum(1 for c in conf_values if pd.isna(c))
-    if n_missing > 0:
-        print(f"  注意: 有 {n_missing} 条记录置信度缺失，使用默认权重 1")
+    nums = [n for n in (n_all, n_cf, n_ref) if n > 0]
+    if len(nums) == 1:
+        L_i = nums[0]
+    else:
+        L_i = 1
+        for num in nums:
+            L_i = lcm(L_i, num)
     
-    # 模拟
-    results = simulate_source_weighted(source_df, source, TOTAL_SAMPLES)
+    source_stats[src] = {'n_all': n_all, 'n_cf': n_cf, 'n_ref': n_ref, 'L_i': L_i}
+
+L_list = [stats['L_i'] for stats in source_stats.values()]
+L_global = 1
+for L_val in L_list:
+    L_global = lcm(L_global, L_val)
+
+print(f"\n各源统计:")
+for src, stats in source_stats.items():
+    print(f"  {src}: 全={stats['n_all']}, CF={stats['n_cf']}, REF={stats['n_ref']}, L_i={stats['L_i']}")
+print(f"\nL_global = {L_global}")
+print(f"每个数据集总样本数 = {L_global} × {BASE_MULTIPLIER} = {L_global * BASE_MULTIPLIER}")
+
+# ==================== 抽样 ====================
+total_samples_per_dataset = L_global * BASE_MULTIPLIER
+
+samples_all = []
+samples_cf = []
+samples_ref = []
+
+print("\n开始蒙特卡洛抽样...")
+for src, stats in source_stats.items():
+    src_df = df[df['源'] == src]
     
-    # 保存结果到 CSV 文件
-    safe_name = source.replace('/', '_').replace('\\', '_').replace(' ', '_').replace('\n', '_').replace(' ', '')
+    all_df = src_df
+    cf_df = src_df[src_df['拟合模型'] == 'continuum-fitting']
+    ref_df = src_df[src_df['拟合模型'] == 'reflection']
     
-    for sim_type, samples in results.items():
-        if len(samples) == 0:
-            continue
-        
-        # 创建 DataFrame
-        result_df = pd.DataFrame({
-            '模拟值': samples,
-            '模拟类型': sim_type,
-            '源': source
-        })
-        
-        # 保存到 CSV
-        filename = f"{safe_name}_{sim_type}.csv"
-        filepath = os.path.join(output_dir, filename)
-        result_df.to_csv(filepath, index=False)
-        print(f"  ✓ 已保存: {filename} ({len(samples)} 个样本)")
+    samples_per_row_all = total_samples_per_dataset // stats['n_all'] if stats['n_all'] > 0 else 0
+    samples_per_row_cf = total_samples_per_dataset // stats['n_cf'] if stats['n_cf'] > 0 else 0
+    samples_per_row_ref = total_samples_per_dataset // stats['n_ref'] if stats['n_ref'] > 0 else 0
     
-    print()
-
-print("\n" + "=" * 60)
-print("蒙特卡洛模拟完成！")
-print(f"结果保存在: {os.path.abspath(output_dir)}")
-print("=" * 60)
-
-# 生成汇总统计
-print("\n生成汇总统计...")
-
-summary_data = []
-for source in sources:
-    safe_name = source.replace('/', '_').replace('\\', '_').replace(' ', '_').replace('\n', '_').replace(' ', '')
+    def draw_samples(df_sub, samples_per_row):
+        if df_sub.empty or samples_per_row == 0:
+            return []
+        samples = []
+        for _, row in df_sub.iterrows():
+            mu = row['自旋值i']
+            sigma = row['sigma_dist']
+            s = np.random.normal(mu, sigma, samples_per_row)
+            s = np.clip(s, -1, 1)
+            samples.extend(s)
+        return samples
     
-    for sim_type in ['all', 'reflection', 'continuum-fitting', 'combining']:
-        filename = f"{safe_name}_{sim_type}.csv"
-        filepath = os.path.join(output_dir, filename)
-        
-        if os.path.exists(filepath):
-            df_sample = pd.read_csv(filepath)
-            samples = df_sample['模拟值']
-            
-            # 计算统计量
-            mean_val = samples.mean()
-            median_val = samples.median()
-            std_val = samples.std()
-            min_val = samples.min()
-            max_val = samples.max()
-            p5 = np.percentile(samples, 5)
-            p95 = np.percentile(samples, 95)
-            ci_lower = np.percentile(samples, 2.5)
-            ci_upper = np.percentile(samples, 97.5)
-            
-            summary_data.append({
-                '源': source,
-                '模拟类型': sim_type,
-                '样本数': len(samples),
-                '均值': mean_val,
-                '中位数': median_val,
-                '标准差': std_val,
-                '最小值': min_val,
-                '最大值': max_val,
-                '5%分位数': p5,
-                '95%分位数': p95,
-                '95%置信区间下限': ci_lower,
-                '95%置信区间上限': ci_upper
-            })
+    s_all = draw_samples(all_df, samples_per_row_all)
+    s_cf = draw_samples(cf_df, samples_per_row_cf)
+    s_ref = draw_samples(ref_df, samples_per_row_ref)
+    
+    samples_all.extend(s_all)
+    samples_cf.extend(s_cf)
+    samples_ref.extend(s_ref)
+    
+    print(f"  {src}: 全={len(s_all)}, CF={len(s_cf)}, REF={len(s_ref)}")
 
-summary_df = pd.DataFrame(summary_data)
-summary_path = os.path.join(output_dir, '汇总统计.csv')
-summary_df.to_csv(summary_path, index=False, encoding='utf-8-sig')
-print(f"✓ 汇总统计已保存: 汇总统计.csv")
+print(f"\n抽样完成！")
+print(f"  全数据集总样本数: {len(samples_all)}")
+print(f"  Continuum-fitting总样本数: {len(samples_cf)}")
+print(f"  Reflection总样本数: {len(samples_ref)}")
 
-# 额外生成一个权重分配说明文件
-weight_info = pd.DataFrame({
-    '说明': [
-        '本模拟采用加权蒙特卡洛方法',
-        '权重依据：自旋值i 置信度(σ) 列',
-        '缺失置信度的数据使用默认权重 1',
-        '每个源每种模拟类型总抽样数: 1000',
-        '抽样数量与置信度成正比（置信度越高，抽样越多）'
-    ]
-})
-weight_info_path = os.path.join(output_dir, '权重分配说明.csv')
-weight_info.to_csv(weight_info_path, index=False, encoding='utf-8-sig')
-print(f"✓ 权重分配说明已保存: 权重分配说明.csv")
+# ==================== 绘图 ====================
+def plot_single_hist(samples, title, filename):
+    """绘制单个柱状图并保存（只有一张图，没有其他子图）"""
+    counts, _ = np.histogram(samples, bins=BINS)
+    bin_centers = (BINS[:-1] + BINS[1:]) / 2
+    
+    plt.figure(figsize=(10, 8))
+    bars = plt.bar(bin_centers, counts, width=0.08, edgecolor='black', alpha=0.7, color='steelblue')
+    plt.xlim(-1, 1)
+    plt.xlabel('黑洞自旋值 a', fontsize=14)
+    plt.ylabel('模拟样本数量', fontsize=14)
+    plt.title(title, fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.5)
+    
+    # 在柱子上方添加数值标签
+    for center, count in zip(bin_centers, counts):
+        if count > 0:
+            plt.text(center, count + max(counts) * 0.01, str(int(count)), 
+                    ha='center', va='bottom', fontsize=9)
+    
+    save_path = OUTPUT_DIR / filename
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()  # 关闭当前图形
+    print(f"图片已保存: {save_path}")
 
-print("\n全部完成！")
+# 生成三张独立图片（每张只有一个柱状图）
+plot_single_hist(samples_all, '所有测量数据（所有源）', 'spin_distribution_all.png')
+plot_single_hist(samples_cf, '仅 Continuum-fitting 模型', 'spin_distribution_cf.png')
+plot_single_hist(samples_ref, '仅 Reflection 模型', 'spin_distribution_ref.png')
+
+# 生成三图并排的对比图
+fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+
+def plot_on_ax(samples, title, ax):
+    """在指定坐标轴上绘制柱状图"""
+    counts, _ = np.histogram(samples, bins=BINS)
+    bin_centers = (BINS[:-1] + BINS[1:]) / 2
+    ax.bar(bin_centers, counts, width=0.08, edgecolor='black', alpha=0.7, color='steelblue')
+    ax.set_xlim(-1, 1)
+    ax.set_xlabel('黑洞自旋值 a', fontsize=12)
+    ax.set_ylabel('模拟样本数量', fontsize=12)
+    ax.set_title(title, fontsize=14)
+    ax.grid(True, linestyle='--', alpha=0.5)
+    
+    # 添加数值标签（可选）
+    for center, count in zip(bin_centers, counts):
+        if count > 0:
+            ax.text(center, count + max(counts) * 0.01, str(int(count)), 
+                   ha='center', va='bottom', fontsize=8)
+
+plot_on_ax(samples_all, '所有测量数据', axes[0])
+plot_on_ax(samples_cf, 'Continuum-fitting 模型', axes[1])
+plot_on_ax(samples_ref, 'Reflection 模型', axes[2])
+
+plt.tight_layout()
+plt.savefig(OUTPUT_DIR / 'spin_distribution_combined.png', dpi=150, bbox_inches='tight')
+plt.close()  # 关闭组合图
+print(f"图片已保存: {OUTPUT_DIR / 'spin_distribution_combined.png'}")
+
+print(f"\n所有图片已保存到: {OUTPUT_DIR}")
+print("  1. spin_distribution_all.png - 所有测量数据")
+print("  2. spin_distribution_cf.png - Continuum-fitting模型")
+print("  3. spin_distribution_ref.png - Reflection模型")
+print("  4. spin_distribution_combined.png - 三图对比")
+
+# ==================== 统计信息 ====================
+def print_statistics(samples, name):
+    if len(samples) == 0:
+        print(f"\n{name} 无数据")
+        return
+    print(f"\n{name} 统计信息:")
+    print(f"  样本总数: {len(samples)}")
+    print(f"  均值: {np.mean(samples):.4f}")
+    print(f"  中位数: {np.median(samples):.4f}")
+    print(f"  标准差: {np.std(samples):.4f}")
+    print(f"  68% CI: [{np.percentile(samples, 16):.4f}, {np.percentile(samples, 84):.4f}]")
+
+print_statistics(samples_all, "所有数据")
+print_statistics(samples_cf, "Continuum-fitting")
+print_statistics(samples_ref, "Reflection")
+
+# ==================== 保存抽样结果 ====================
+pd.DataFrame({'samples_all': samples_all}).to_csv(OUTPUT_DIR / 'sampled_spins_all.csv', index=False)
+pd.DataFrame({'samples_cf': samples_cf}).to_csv(OUTPUT_DIR / 'sampled_spins_cf.csv', index=False)
+pd.DataFrame({'samples_ref': samples_ref}).to_csv(OUTPUT_DIR / 'sampled_spins_ref.csv', index=False)
+print(f"\n抽样数据已保存到: {OUTPUT_DIR}")
+
+print("\n蒙特卡洛模拟完成！")
