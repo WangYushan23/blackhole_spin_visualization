@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 import re
+from pathlib import Path
 
 # 设置字体和样式
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
@@ -33,10 +34,8 @@ def get_error_type(error_min, error_max):
     is_min_nan = is_nan(error_min)
     is_max_nan = is_nan(error_max)
     
-    # 处理 < 类型：error_min 为 NaN，error_max 为 0 或 NaN
     if is_min_nan and (error_max == 0 or is_max_nan):
         return 'less_than'
-    # 处理 > 类型：error_max 为 NaN，error_min 为 0 或 NaN
     if is_max_nan and (error_min == 0 or is_min_nan):
         return 'greater_than'
     return 'normal'
@@ -80,9 +79,9 @@ def get_year_sort_key(year_str):
     return 9999
 
 def format_burst_year(year_str):
-    """格式化爆发年份用于显示（保持原样，但补全两位数年份为四位数）"""
+    """格式化爆发年份用于显示"""
     if pd.isna(year_str):
-        return 'Unknown'
+        return ''
     year_str = str(year_str).strip()
     if '+' in year_str or '-' in year_str:
         return year_str
@@ -95,13 +94,22 @@ def format_burst_year(year_str):
         return year_str
     return year_str
 
-def estimate_text_width(text, fontsize=8):
-    """估算文本宽度（单位：x轴坐标单位）"""
-    # 中文字符算2个单位宽度，英文字符算1个单位宽度
-    chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
-    english_chars = len(text) - chinese_chars
-    # 每个字符约占总坐标的 0.008 倍（经验值）
-    return (chinese_chars * 2 + english_chars) * 0.0065 * (fontsize / 8)
+def format_spin_text(row):
+    """格式化自旋值文本（用于显示）"""
+    a_star = row['自旋值i']
+    error_min = row['自旋值i -']
+    error_max = row['自旋值i +']
+    error_type = get_error_type(error_min, error_max)
+    
+    if error_type == 'less_than':
+        return f"<{a_star:.3f}"
+    elif error_type == 'greater_than':
+        return f">{a_star:.3f}"
+    else:
+        if not pd.isna(error_min) and not pd.isna(error_max):
+            if (error_min > 0 or error_max > 0) and not np.isinf(error_min) and not np.isinf(error_max):
+                return f"${a_star:.3f}^{{+{error_max:.3f}}}_{{-{error_min:.3f}}}$"
+        return f"{a_star:.3f}"
 
 def prepare_source_df(df, source_name):
     """为指定黑洞准备并排序数据"""
@@ -109,13 +117,11 @@ def prepare_source_df(df, source_name):
     if len(source_df) == 0:
         return None
     
-    # 添加辅助列
     source_df['lit_year'] = source_df['文献来源'].apply(get_lit_year)
     source_df['year_sort'] = source_df['爆发时间'].apply(get_year_sort_key)
     source_df['burst_year_display'] = source_df['爆发时间'].apply(format_burst_year)
     source_df['author'], source_df['lit_year_str'] = zip(*source_df['文献来源'].apply(parse_literature))
     
-    # 按模型、爆发年份、文献年份排序
     sorted_indices = []
     for model in model_order:
         model_df = source_df[source_df['拟合模型'] == model]
@@ -133,51 +139,13 @@ def prepare_source_df(df, source_name):
     return source_df
 
 def plot_single_source(source_df, source_name, output_dir):
-    """绘制单个黑洞的图表"""
+    """绘制单个黑洞的图表 - 最终版本"""
     n_points = len(source_df)
-    y_min = -0.5
-    y_max = n_points - 0.5
     
-    fig, ax = plt.subplots(figsize=(14, max(7, n_points * 0.8)))
+    # 检查是否有负值
+    has_negative = any(source_df['自旋值i'] < 0)
     
-    # 第一遍：绘制数据点和误差棒（包括范围值的箭头）
-    for i, row in source_df.iterrows():
-        a_star = row['自旋值i']
-        error_min = row['自旋值i -']
-        error_max = row['自旋值i +']
-        model = row['拟合模型']
-        color = color_map.get(model, other_color)
-        
-        error_type = get_error_type(error_min, error_max)
-        
-        if error_type == 'less_than':
-            # 向左箭头：从数据点 a_star 向左指
-            ax.arrow(a_star, i, -0.10, 0,
-                    head_width=0.1, head_length=0.02,
-                    fc=color, ec=color, alpha=0.8, linewidth=1.0)
-            ax.plot(a_star, i, 'o', color=color, markersize=8)
-        elif error_type == 'greater_than':
-            # 向右箭头：从数据点 a_star 向右指
-            ax.arrow(a_star, i, 0.10, 0,
-                    head_width=0.1, head_length=0.02,
-                    fc=color, ec=color, alpha=0.8, linewidth=1.0)
-            ax.plot(a_star, i, 'o', color=color, markersize=8)
-        else:
-            # 正常误差棒
-            has_error = False
-            if not pd.isna(error_min) and not pd.isna(error_max):
-                if (error_min > 0 or error_max > 0) and not np.isinf(error_min) and not np.isinf(error_max):
-                    has_error = True
-            
-            if has_error:
-                xerr = [[error_min], [error_max]]
-                ax.errorbar(a_star, i, xerr=xerr, fmt='o', color=color,
-                           capsize=5, markersize=10, elinewidth=2,
-                           ecolor=color, markeredgecolor=color, markerfacecolor=color)
-            else:
-                ax.plot(a_star, i, 'o', color=color, markersize=10)
-    
-    # 计算 x 轴范围
+    # 计算x轴范围
     all_values = []
     for i, row in source_df.iterrows():
         a_star = row['自旋值i']
@@ -200,107 +168,138 @@ def plot_single_source(source_df, source_name, output_dir):
     min_val = min(all_values)
     max_val = max(all_values)
     
-    if min_val < 0:
-        x_min = -1.05
+    # 设置x轴范围
+    if has_negative:
+        x_min = -1.0
+        x_max = 1.0
     else:
-        x_min = 0
+        x_min = 0.0
+        x_max = 1.0
     
-    x_max = max(1.05, max_val + 0.1)
-    ax.set_xlim(x_min, x_max)
+    # 确保所有数据点在范围内
+    if min_val < x_min:
+        x_min = min_val - 0.05
+    if max_val > x_max:
+        x_max = max_val + 0.1
     
-    x_range = x_max - x_min
+    # 计算每行的y位置 - 增加行间距，为下方标签留空间
+    y_spacing = 1.4  # 增加行间距
+    y_start = 0.5    # 从0.5开始，给顶部留空间
+    y_positions = [y_start + i * y_spacing for i in range(n_points)]
     
-    # 第二遍：添加标注（数值标签和文献标签）
-    for i, row in source_df.iterrows():
+    # 计算图表尺寸
+    fig_width = 14
+    fig_height = max(6, n_points * 0.9 + 1)  # 增加高度
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    
+    # 设置黑色边框
+    for spine in ax.spines.values():
+        spine.set_visible(True)
+        spine.set_color('black')
+        spine.set_linewidth(1.5)
+    
+    # 设置y轴范围 - 给顶部和底部留空间
+    y_min = -0.3
+    y_max = max(y_positions) + 0.8
+    ax.set_ylim(y_min, y_max)
+    
+    # 绘制数据点和误差棒
+    for idx, (i, row) in enumerate(source_df.iterrows()):
+        y_pos = y_positions[idx]
         a_star = row['自旋值i']
         error_min = row['自旋值i -']
         error_max = row['自旋值i +']
+        model = row['拟合模型']
+        color = color_map.get(model, other_color)
+        
+        error_type = get_error_type(error_min, error_max)
+        
+        if error_type == 'less_than':
+            ax.arrow(a_star, y_pos, -0.08, 0,
+                    head_width=0.08, head_length=0.015,
+                    fc=color, ec=color, alpha=0.8, linewidth=1.0,
+                    length_includes_head=True)
+            ax.plot(a_star, y_pos, 'o', color=color, markersize=8, zorder=10)
+        elif error_type == 'greater_than':
+            ax.arrow(a_star, y_pos, 0.08, 0,
+                    head_width=0.08, head_length=0.015,
+                    fc=color, ec=color, alpha=0.8, linewidth=1.0,
+                    length_includes_head=True)
+            ax.plot(a_star, y_pos, 'o', color=color, markersize=8, zorder=10)
+        else:
+            has_error = False
+            if not pd.isna(error_min) and not pd.isna(error_max):
+                if (error_min > 0 or error_max > 0) and not np.isinf(error_min) and not np.isinf(error_max):
+                    has_error = True
+            
+            if has_error:
+                xerr = [[error_min], [error_max]]
+                ax.errorbar(a_star, y_pos, xerr=xerr, fmt='o', color=color,
+                           capsize=5, markersize=8, elinewidth=1.5,
+                           ecolor=color, markeredgecolor=color, 
+                           markerfacecolor=color, zorder=10)
+            else:
+                ax.plot(a_star, y_pos, 'o', color=color, markersize=8, zorder=10)
+    
+    # 为每个数据点添加标签
+    for idx, row in source_df.iterrows():
+        y_pos = y_positions[idx]
+        a_star = row['自旋值i']
         model = row['拟合模型']
         author = row['author']
         burst_year = row['burst_year_display']
         lit_year = row['lit_year_str']
         color = color_map.get(row['拟合模型'], other_color)
         
-        error_type = get_error_type(error_min, error_max)
+        # 格式化自旋值文本
+        spin_text = format_spin_text(row)
         
-        # 数值标签
-        if error_type == 'less_than':
-            upper_text = f"<{a_star:.3f}"
-            ax.text(a_star - 0.12, i + 0.2, upper_text, fontsize=10, va='bottom', ha='center', 
-                    color=color, fontweight='bold')
-        elif error_type == 'greater_than':
-            upper_text = f">{a_star:.3f}"
-            ax.text(a_star + 0.12, i + 0.2, upper_text, fontsize=10, va='bottom', ha='center', 
-                    color=color, fontweight='bold')
+        # 构建完整的左侧文本 - 去掉中间的横线
+        if burst_year and burst_year != 'Unknown':
+            left_text = f"{model} {burst_year} {author} ({lit_year})"
         else:
-            if not pd.isna(error_min) and not pd.isna(error_max):
-                if (error_min > 0 or error_max > 0) and not np.isinf(error_min) and not np.isinf(error_max):
-                    upper_text = f"{a_star:.3f}$^{{+{error_max:.3f}}}_{{-{error_min:.3f}}}$"
-                else:
-                    upper_text = f"{a_star:.3f}"
-            else:
-                upper_text = f"{a_star:.3f}"
-            ax.text(a_star, i + 0.2, upper_text, fontsize=10, va='bottom', ha='center', 
-                    color=color, fontweight='bold')
-        
-        # 文献标签 - 根据文本长度动态调整位置
-        lower_text = f"{model} {burst_year} {author} ({lit_year})"
+            left_text = f"{model} {author} ({lit_year})"
         
         # 估算文本宽度
-        text_width = estimate_text_width(lower_text, fontsize=8)
-        min_space_needed = text_width + 0.08  # 需要的最小空间
-        
-        right_space = x_max - a_star
+        text_width = len(left_text) * 0.01
         left_space = a_star - x_min
         
-        # 检查是否有数据点紧邻
-        right_data_distance = min([abs(a_star - row2['自旋值i']) for _, row2 in source_df.iterrows() if abs(a_star - row2['自旋值i']) > 0.01] + [1.0])
-        
-        # 计算垂直偏移，避免上下重叠
-        y_offset = 0
-        # 检查相邻数据点是否在附近
-        for other_i in range(max(0, i-2), min(n_points, i+3)):
-            if other_i != i:
-                other_a = source_df.iloc[other_i]['自旋值i']
-                if abs(a_star - other_a) < 0.15:
-                    y_offset -= 0.12 * (1 if other_i < i else 0)
-        
-        # 智能定位
-        if right_space > min_space_needed and right_data_distance > 0.1:
-            # 放在右侧
-            x_pos = a_star + 0.04
-            ha = 'left'
-            va = 'center'
-            final_y = i + y_offset
-        elif left_space > min_space_needed and right_data_distance > 0.1:
-            # 放在左侧
-            x_pos = a_star - 0.04
-            ha = 'right'
-            va = 'center'
-            final_y = i + y_offset
+        # 判断是否放在同一行
+        if left_space > text_width + 0.15:
+            # 空间足够，放在同一行左侧
+            ax.text(x_min + 0.05, y_pos, left_text, fontsize=9, 
+                   va='center', ha='left', color=color, alpha=0.85,
+                   fontweight='normal')
+            
+            # 自旋值放在数据点正上方
+            ax.text(a_star, y_pos + 0.35, spin_text, fontsize=10, 
+                   va='bottom', ha='center', color=color, alpha=0.9,
+                   fontweight='bold')
         else:
-            # 空间不足，放在下方
-            x_pos = a_star
-            ha = 'center'
-            va = 'top'
-            final_y = i - 0.45
-        
-        ax.text(x_pos, final_y, lower_text, fontsize=8, 
-                va=va, ha=ha, color=color, alpha=0.9,
-                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='none'))
+            # 空间不足，文本放在数据点下方
+            ax.text(x_min + 0.05, y_pos - 0.45, left_text, fontsize=9, 
+                   va='top', ha='left', color=color, alpha=0.85,
+                   fontweight='normal')
+            
+            # 自旋值放在数据点正上方
+            ax.text(a_star, y_pos + 0.35, spin_text, fontsize=10, 
+                   va='bottom', ha='center', color=color, alpha=0.9,
+                   fontweight='bold')
     
-    # 隐藏 y 轴
+    # 设置坐标轴
     ax.set_yticks([])
-    ax.set_ylim(y_min, y_max)
+    ax.set_xlim(x_min, x_max)
     
-    # 设置 x 轴
-    ax.set_xlabel(r'$a_*$', fontsize=16, ha='center', fontweight='bold', labelpad=12)
-    ax.grid(axis='x', linestyle='--', alpha=0.5, linewidth=0.8)
-    ax.set_title(source_name, fontsize=16, fontweight='bold')
-    ax.tick_params(axis='x', labelsize=12)
+    # 设置x轴标签
+    ax.set_xlabel(r'$a_*$', fontsize=14, ha='center', fontweight='bold', labelpad=10)
+    ax.tick_params(axis='x', labelsize=11)
     
-    # 调整边距
-    plt.subplots_adjust(left=0.2, bottom=0.18)
+    # 添加网格线
+    ax.grid(axis='x', linestyle='--', alpha=0.3, linewidth=0.5)
+    
+    # 设置标题
+    ax.set_title(source_name, fontsize=14, fontweight='bold', pad=15)
+    
     plt.tight_layout()
     
     # 保存图片
@@ -311,29 +310,58 @@ def plot_single_source(source_df, source_name, output_dir):
     print(f"  已生成: {safe_name}.png ({len(source_df)} 个数据点)")
 
 def main():
+    # 获取当前脚本所在目录
+    script_dir = Path(__file__).parent.absolute()
+    
+    # 任务一文件夹 = scripts的父目录
+    task1_dir = script_dir.parent
+    
+    # 根目录 = 任务一文件夹的父目录
+    root_dir = task1_dir.parent
+    
+    # data文件夹在根目录下
+    data_dir = root_dir / 'data'
+    data_file = data_dir / '数据收集 表3 画图用.xlsx'
+    
+    # output文件夹在任务一文件夹下（与scripts同级）
+    output_dir = task1_dir / 'output'
+    
+    print(f"脚本目录: {script_dir}")
+    print(f"任务一目录: {task1_dir}")
+    print(f"根目录: {root_dir}")
+    print(f"数据文件路径: {data_file}")
+    print(f"输出目录: {output_dir}")
+    
+    # 检查数据文件是否存在
+    if not data_file.exists():
+        print(f"错误：找不到数据文件 {data_file}")
+        print("请确保目录结构为：")
+        print("blackhole_spin_visualization/")
+        print("├── data/")
+        print("│   └── 数据收集 表3 画图用.xlsx")
+        print("└── 任务一 同一黑洞多个自旋值画图/")
+        print("    ├── scripts/")
+        print("    │   └── plot_spin_parameters.py")
+        print("    └── output/")
+        return
+    
     # 读取数据
     print("正在读取数据...")
-    df = pd.read_excel(r'C:\Users\王雨珊\Desktop\blackhole_spin_visualization\data\数据收集 表3 画图用.xlsx', sheet_name='Sheet1')
+    df = pd.read_excel(data_file, sheet_name='Sheet1')
     print(f"成功读取 {len(df)} 行数据")
     
-    # 清洗数据：转换数值并处理范围值
     df['自旋值i -'] = pd.to_numeric(df['自旋值i -'], errors='coerce')
     df['自旋值i +'] = pd.to_numeric(df['自旋值i +'], errors='coerce')
-    
-    # 清洗：向前填充黑洞名称
     df['源'] = df['源'].ffill()
     df = df.dropna(subset=['源'])
     print(f"清洗后剩余 {len(df)} 行数据")
     
-    # 获取所有黑洞名称
     sources = df['源'].unique()
     print(f"共发现 {len(sources)} 个黑洞")
     
-    # 创建输出目录
-    output_dir = '任务一 同一黑洞多个自旋值画图/output'
     os.makedirs(output_dir, exist_ok=True)
+    print(f"输出目录: {output_dir}")
     
-    # 逐个黑洞绘图
     for i, source in enumerate(sources, 1):
         print(f"\n[{i}/{len(sources)}] 处理黑洞: {source}")
         source_df = prepare_source_df(df, source)
