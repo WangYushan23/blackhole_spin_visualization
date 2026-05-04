@@ -139,7 +139,7 @@ def prepare_source_df(df, source_name):
     return source_df
 
 def plot_single_source(source_df, source_name, output_dir):
-    """绘制单个黑洞的图表 - 最终版本"""
+    """绘制单个黑洞的图表 - 简化版本，确保文字向下移动"""
     n_points = len(source_df)
     
     # 检查是否有负值
@@ -180,16 +180,18 @@ def plot_single_source(source_df, source_name, output_dir):
     if min_val < x_min:
         x_min = min_val - 0.05
     if max_val > x_max:
-        x_max = max_val + 0.1
+        x_max = max_val + 0.15
     
-    # 计算每行的y位置 - 增加行间距，为下方标签留空间
-    y_spacing = 1.4  # 增加行间距
-    y_start = 0.5    # 从0.5开始，给顶部留空间
+    # 统一使用较大的行间距，确保文字不遮挡
+    y_spacing = 1.6      # 增加行间距
+    y_start = 0.8        # 增加顶部空间
+    
+    # 计算每行的y位置
     y_positions = [y_start + i * y_spacing for i in range(n_points)]
     
     # 计算图表尺寸
     fig_width = 14
-    fig_height = max(6, n_points * 0.9 + 1)  # 增加高度
+    fig_height = max(6, n_points * 0.9 + 1.2)
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     
     # 设置黑色边框
@@ -198,9 +200,9 @@ def plot_single_source(source_df, source_name, output_dir):
         spine.set_color('black')
         spine.set_linewidth(1.5)
     
-    # 设置y轴范围 - 给顶部和底部留空间
-    y_min = -0.3
-    y_max = max(y_positions) + 0.8
+    # 设置y轴范围 - 给底部留更多空间
+    y_min = -0.5
+    y_max = max(y_positions) + 1.0
     ax.set_ylim(y_min, y_max)
     
     # 绘制数据点和误差棒
@@ -241,7 +243,7 @@ def plot_single_source(source_df, source_name, output_dir):
             else:
                 ax.plot(a_star, y_pos, 'o', color=color, markersize=8, zorder=10)
     
-    # 为每个数据点添加标签
+    # 为每个数据点添加标签 - 关键修改：所有文本都放在数据点下方
     for idx, row in source_df.iterrows():
         y_pos = y_positions[idx]
         a_star = row['自旋值i']
@@ -254,37 +256,22 @@ def plot_single_source(source_df, source_name, output_dir):
         # 格式化自旋值文本
         spin_text = format_spin_text(row)
         
-        # 构建完整的左侧文本 - 去掉中间的横线
+        # 构建完整的左侧文本
         if burst_year and burst_year != 'Unknown':
             left_text = f"{model} {burst_year} {author} ({lit_year})"
         else:
             left_text = f"{model} {author} ({lit_year})"
         
-        # 估算文本宽度
-        text_width = len(left_text) * 0.01
-        left_space = a_star - x_min
+        # 关键修改：所有参考文献文本都放在数据点下方，向下偏移0.6
+        # 自旋值放在数据点正上方，向上偏移0.4
+        ax.text(x_min + 0.05, y_pos - 0.6, left_text, fontsize=9, 
+               va='top', ha='left', color=color, alpha=0.85,
+               fontweight='normal')
         
-        # 判断是否放在同一行
-        if left_space > text_width + 0.15:
-            # 空间足够，放在同一行左侧
-            ax.text(x_min + 0.05, y_pos, left_text, fontsize=9, 
-                   va='center', ha='left', color=color, alpha=0.85,
-                   fontweight='normal')
-            
-            # 自旋值放在数据点正上方
-            ax.text(a_star, y_pos + 0.35, spin_text, fontsize=10, 
-                   va='bottom', ha='center', color=color, alpha=0.9,
-                   fontweight='bold')
-        else:
-            # 空间不足，文本放在数据点下方
-            ax.text(x_min + 0.05, y_pos - 0.45, left_text, fontsize=9, 
-                   va='top', ha='left', color=color, alpha=0.85,
-                   fontweight='normal')
-            
-            # 自旋值放在数据点正上方
-            ax.text(a_star, y_pos + 0.35, spin_text, fontsize=10, 
-                   va='bottom', ha='center', color=color, alpha=0.9,
-                   fontweight='bold')
+        # 自旋值放在数据点正上方
+        ax.text(a_star, y_pos + 0.4, spin_text, fontsize=10, 
+               va='bottom', ha='center', color=color, alpha=0.9,
+               fontweight='bold')
     
     # 设置坐标轴
     ax.set_yticks([])
