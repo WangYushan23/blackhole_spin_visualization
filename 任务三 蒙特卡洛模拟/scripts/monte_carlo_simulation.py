@@ -155,9 +155,9 @@ def plot_single_hist(samples, title, filename):
     plt.figure(figsize=(10, 8))
     bars = plt.bar(bin_centers, counts, width=0.08, edgecolor='black', alpha=0.7, color='steelblue')
     plt.xlim(-1, 1)
-    plt.ylim(0, Y_LIMIT)  # 统一纵坐标范围
+    plt.ylim(0, Y_LIMIT)
     plt.xlabel('黑洞自旋值 a', fontsize=14)
-    plt.ylabel('模拟样本数量', fontsize=14)
+    plt.ylabel('MC预测值', fontsize=14)  # 修改为"MC预测值"
     plt.title(title, fontsize=16)
     plt.grid(True, linestyle='--', alpha=0.5)
     
@@ -169,7 +169,7 @@ def plot_single_hist(samples, title, filename):
     
     save_path = OUTPUT_DIR / filename
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    plt.close()  # 关闭当前图形
+    plt.close()
     print(f"图片已保存: {save_path}")
 
 # 生成三张独立图片（每张只有一个柱状图，纵坐标统一）
@@ -177,7 +177,7 @@ plot_single_hist(samples_all, '所有测量数据（所有源）', 'spin_distrib
 plot_single_hist(samples_cf, '仅 Continuum-fitting 模型', 'spin_distribution_cf.png')
 plot_single_hist(samples_ref, '仅 Reflection 模型', 'spin_distribution_ref.png')
 
-# 生成三图并排的对比图（纵坐标也统一）
+# 生成三图并排的对比图
 fig, axes = plt.subplots(1, 3, figsize=(18, 6))
 
 def plot_on_ax(samples, title, ax):
@@ -186,9 +186,9 @@ def plot_on_ax(samples, title, ax):
     bin_centers = (BINS[:-1] + BINS[1:]) / 2
     ax.bar(bin_centers, counts, width=0.08, edgecolor='black', alpha=0.7, color='steelblue')
     ax.set_xlim(-1, 1)
-    ax.set_ylim(0, Y_LIMIT)  # 统一纵坐标范围
+    ax.set_ylim(0, Y_LIMIT)
     ax.set_xlabel('黑洞自旋值 a', fontsize=12)
-    ax.set_ylabel('模拟样本数量', fontsize=12)
+    ax.set_ylabel('MC预测值', fontsize=12)  # 修改为"MC预测值"
     ax.set_title(title, fontsize=14)
     ax.grid(True, linestyle='--', alpha=0.5)
     
@@ -204,7 +204,7 @@ plot_on_ax(samples_ref, 'Reflection 模型', axes[2])
 
 plt.tight_layout()
 plt.savefig(OUTPUT_DIR / 'spin_distribution_combined.png', dpi=150, bbox_inches='tight')
-plt.close()  # 关闭组合图
+plt.close()
 print(f"图片已保存: {OUTPUT_DIR / 'spin_distribution_combined.png'}")
 
 print(f"\n所有图片已保存到: {OUTPUT_DIR}")
