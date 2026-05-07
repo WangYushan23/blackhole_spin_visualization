@@ -23,6 +23,9 @@ BASE_MULTIPLIER = 100
 BINS = np.arange(-1.0, 1.01, 0.1)
 CONF_TO_Z = {1.0: 1.0, 1.645: 1.645, 2.576: 2.576, 3.0: 3.0}
 
+# 统一纵坐标范围（根据 Reflection 模型最高约 225,346，设置为 250,000 留有余量）
+Y_LIMIT = 250000
+
 np.random.seed(42)
 
 # ==================== 路径设置 ====================
@@ -152,6 +155,7 @@ def plot_single_hist(samples, title, filename):
     plt.figure(figsize=(10, 8))
     bars = plt.bar(bin_centers, counts, width=0.08, edgecolor='black', alpha=0.7, color='steelblue')
     plt.xlim(-1, 1)
+    plt.ylim(0, Y_LIMIT)  # 统一纵坐标范围
     plt.xlabel('黑洞自旋值 a', fontsize=14)
     plt.ylabel('模拟样本数量', fontsize=14)
     plt.title(title, fontsize=16)
@@ -168,12 +172,12 @@ def plot_single_hist(samples, title, filename):
     plt.close()  # 关闭当前图形
     print(f"图片已保存: {save_path}")
 
-# 生成三张独立图片（每张只有一个柱状图）
+# 生成三张独立图片（每张只有一个柱状图，纵坐标统一）
 plot_single_hist(samples_all, '所有测量数据（所有源）', 'spin_distribution_all.png')
 plot_single_hist(samples_cf, '仅 Continuum-fitting 模型', 'spin_distribution_cf.png')
 plot_single_hist(samples_ref, '仅 Reflection 模型', 'spin_distribution_ref.png')
 
-# 生成三图并排的对比图
+# 生成三图并排的对比图（纵坐标也统一）
 fig, axes = plt.subplots(1, 3, figsize=(18, 6))
 
 def plot_on_ax(samples, title, ax):
@@ -182,6 +186,7 @@ def plot_on_ax(samples, title, ax):
     bin_centers = (BINS[:-1] + BINS[1:]) / 2
     ax.bar(bin_centers, counts, width=0.08, edgecolor='black', alpha=0.7, color='steelblue')
     ax.set_xlim(-1, 1)
+    ax.set_ylim(0, Y_LIMIT)  # 统一纵坐标范围
     ax.set_xlabel('黑洞自旋值 a', fontsize=12)
     ax.set_ylabel('模拟样本数量', fontsize=12)
     ax.set_title(title, fontsize=14)
