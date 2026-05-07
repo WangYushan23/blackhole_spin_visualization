@@ -30,7 +30,7 @@ def get_error_type(error_min, error_max):
         return 'greater_than'
     return 'normal'
 
-def get_x_bounds(a_star, error_min, error_max, error_type, x_min=0, x_max=1):
+def get_x_bounds(a_star, error_min, error_max, error_type, x_min=-1, x_max=1):
     """计算 x 方向的边界（左边界，右边界）"""
     if error_type == 'normal':
         if pd.isna(error_min) or np.isinf(error_min):
@@ -113,6 +113,17 @@ def get_y_bounds_distance(y_value, error_min, error_max, error_type, y_min_val=0
     
     return bottom, top
 
+def check_zero_errors(error_min, error_max):
+    """检查误差是否都是0（即倾角或距离误差为0.000的情况）"""
+    def is_zero(val):
+        if pd.isna(val):
+            return False
+        if isinstance(val, (int, float)):
+            return abs(val) < 1e-6
+        return False
+    
+    return is_zero(error_min) and is_zero(error_max)
+
 def plot_dataset(ax, df, x_range, y_range, y_type, source_color_map, title, x_label, y_label, 
                  show_points=True, alpha=0.4):
     """
@@ -132,17 +143,34 @@ def plot_dataset(ax, df, x_range, y_range, y_type, source_color_map, title, x_la
                 y_err_min = row[inclination_err_min_col]
                 y_err_max = row[inclination_err_max_col]
                 y_min_val, y_max_val = y_range
-                y_bottom, y_top = get_y_bounds_inclination(y_value, y_err_min, y_err_max, 
-                                                            get_error_type(y_err_min, y_err_max),
-                                                            y_min_val, y_max_val)
+                
+                # 检查倾角误差是否都为0
+                y_zero_errors = check_zero_errors(y_err_min, y_err_max)
+                
+                if not y_zero_errors:
+                    y_bottom, y_top = get_y_bounds_inclination(y_value, y_err_min, y_err_max, 
+                                                                get_error_type(y_err_min, y_err_max),
+                                                                y_min_val, y_max_val)
+                else:
+                    # 如果倾角误差为0，则只使用自旋值的矩形
+                    y_bottom, y_top = y_value, y_value
+                    
             else:  # distance
                 y_value = row[distance_col]
                 y_err_min = row[distance_err_min_col]
                 y_err_max = row[distance_err_max_col]
                 y_min_val, y_max_val = y_range
-                y_bottom, y_top = get_y_bounds_distance(y_value, y_err_min, y_err_max,
-                                                         get_error_type(y_err_min, y_err_max),
-                                                         y_min_val, y_max_val)
+                
+                # 检查距离误差是否都为0
+                y_zero_errors = check_zero_errors(y_err_min, y_err_max)
+                
+                if not y_zero_errors:
+                    y_bottom, y_top = get_y_bounds_distance(y_value, y_err_min, y_err_max,
+                                                             get_error_type(y_err_min, y_err_max),
+                                                             y_min_val, y_max_val)
+                else:
+                    # 如果距离误差为0，则只使用自旋值的矩形
+                    y_bottom, y_top = y_value, y_value
             
             a_err_min = row[spin_err_min_col]
             a_err_max = row[spin_err_max_col]
@@ -153,11 +181,16 @@ def plot_dataset(ax, df, x_range, y_range, y_type, source_color_map, title, x_la
             width = x_right - x_left
             height = y_top - y_bottom
             
+            # 只有当宽度或高度大于0时才绘制矩形
             if width > 0 and height > 0:
                 rect = patches.Rectangle((x_left, y_bottom), width, height,
                                          fill=True, alpha=alpha, facecolor=color,
                                          linewidth=1, edgecolor=color, linestyle='-')
                 ax.add_patch(rect)
+            elif width > 0 and height == 0:
+                # 如果只有宽度有值，绘制一条水平线表示自旋误差
+                ax.hlines(y=y_value, xmin=x_left, xmax=x_right, 
+                         colors=color, linewidth=2, alpha=alpha*0.8)
             
             # 绘制中心点（可选）
             if show_points:
@@ -174,7 +207,7 @@ def plot_dataset(ax, df, x_range, y_range, y_type, source_color_map, title, x_la
 
 # 读取数据
 print("正在读取数据...")
-file_path = 'data/数据收集 表2 画图用.xlsx'
+file_path = 'data/数据收集 表2 画图用.xlsx'  # 正确的写法（有空格）
 df = pd.read_excel(file_path, sheet_name='Sheet1')
 print(f"成功读取 {len(df)} 行数据")
 
@@ -222,15 +255,15 @@ datasets = {
     'combining': df[df[model_col] == 'combining']
 }
 
-# 定义绘图配置
+# 定义绘图配置 - 修改x轴范围为(-1, 1)和(0.25, 1)
 plot_configs = [
-    {'name': 'spin_vs_inclination_full', 'x_range': (0, 1), 'y_range': (0, 90),
+    {'name': 'spin_vs_inclination_full', 'x_range': (-1, 1), 'y_range': (0, 90),
      'x_label': r'自旋值 $a_*$', 'y_label': r'倾角 $i$ (度)', 'y_type': 'inclination',
      'title_suffix': '自旋-倾角关系 (全范围)'},
     {'name': 'spin_vs_inclination_zoom', 'x_range': (0.25, 1), 'y_range': (0, 90),
      'x_label': r'自旋值 $a_*$', 'y_label': r'倾角 $i$ (度)', 'y_type': 'inclination',
      'title_suffix': '自旋-倾角关系 (自旋 ≥ 0.25)'},
-    {'name': 'spin_vs_distance_full', 'x_range': (0, 1), 'y_range': (0, 15),
+    {'name': 'spin_vs_distance_full', 'x_range': (-1, 1), 'y_range': (0, 15),
      'x_label': r'自旋值 $a_*$', 'y_label': r'距离 $d$ (kpc)', 'y_type': 'distance',
      'title_suffix': '自旋-距离关系 (全范围)'},
     {'name': 'spin_vs_distance_zoom', 'x_range': (0.25, 1), 'y_range': (0, 15),
