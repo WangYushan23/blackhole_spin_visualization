@@ -30,8 +30,19 @@ def get_error_type(error_min, error_max):
         return 'greater_than'
     return 'normal'
 
-def get_x_bounds(a_star, error_min, error_max, error_type, x_min=-1, x_max=1):
-    """计算 x 方向的边界（左边界，右边界）"""
+def get_x_bounds(a_star, error_min, error_max, error_type, x_min=-1, x_max=1, model_name=None):
+    """计算 x 方向的边界（左边界，右边界）
+    
+    对于 reflection 和 combining 模型，自旋值边界在 -0.998 和 0.998 处截断
+    """
+    # 对于 reflection 和 combining 模型，强制使用 -0.998 和 0.998 作为边界
+    if model_name in ['reflection', 'combining']:
+        bound_min = -0.998
+        bound_max = 0.998
+    else:
+        bound_min = x_min
+        bound_max = x_max
+    
     if error_type == 'normal':
         if pd.isna(error_min) or np.isinf(error_min):
             left = a_star
@@ -42,20 +53,20 @@ def get_x_bounds(a_star, error_min, error_max, error_type, x_min=-1, x_max=1):
         else:
             right = a_star + error_max
     elif error_type == 'less_than':
-        # < 类型：向左延伸到 x_min
-        left = x_min
+        # < 类型：向左延伸到 bound_min
+        left = bound_min
         right = a_star
     elif error_type == 'greater_than':
-        # > 类型：向右延伸到 x_max
+        # > 类型：向右延伸到 bound_max
         left = a_star
-        right = x_max
+        right = bound_max
     else:
         left = a_star
         right = a_star
     
     # 确保边界在合理范围内
-    left = max(left, x_min)
-    right = min(right, x_max)
+    left = max(left, bound_min)
+    right = min(right, bound_max)
     
     return left, right
 
@@ -125,11 +136,13 @@ def check_zero_errors(error_min, error_max):
     return is_zero(error_min) and is_zero(error_max)
 
 def plot_dataset(ax, df, x_range, y_range, y_type, source_color_map, title, x_label, y_label, 
-                 show_points=True, alpha=0.4):
+                 show_points=True, alpha=0.4, model_name=None, subplot_label=None):
     """
     绘制单个数据集
     y_type: 'inclination' 或 'distance'
     show_points: 是否显示中心圆点
+    model_name: 模型名称，用于确定自旋值边界
+    subplot_label: 子图标签（如 'a', 'b', 'c', 'd'）
     """
     for source in df['源'].unique():
         source_df = df[df['源'] == source]
@@ -175,7 +188,10 @@ def plot_dataset(ax, df, x_range, y_range, y_type, source_color_map, title, x_la
             a_err_min = row[spin_err_min_col]
             a_err_max = row[spin_err_max_col]
             a_error_type = get_error_type(a_err_min, a_err_max)
-            x_left, x_right = get_x_bounds(a_star, a_err_min, a_err_max, a_error_type, x_range[0], x_range[1])
+            
+            # 调用 get_x_bounds，传入 model_name 以确保正确的边界截断
+            x_left, x_right = get_x_bounds(a_star, a_err_min, a_err_max, a_error_type, 
+                                           x_range[0], x_range[1], model_name)
             
             # 绘制矩形（表示误差范围）
             width = x_right - x_left
@@ -204,6 +220,12 @@ def plot_dataset(ax, df, x_range, y_range, y_type, source_color_map, title, x_la
     ax.set_ylabel(y_label, fontsize=12, fontweight='bold')
     ax.set_title(title, fontsize=14, fontweight='bold')
     ax.grid(True, linestyle='--', alpha=0.3, linewidth=0.8)
+    
+    # 添加子图标签 (a), (b), (c), (d) - 去掉黑框
+    if subplot_label:
+        ax.text(0.02, 0.98, f'({subplot_label})', transform=ax.transAxes, 
+                fontsize=16, fontweight='bold', va='top', ha='left',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='none'))
 
 # 读取数据
 print("正在读取数据...")
@@ -247,28 +269,29 @@ print(f"共发现 {len(sources)} 个黑洞")
 colors = plt.cm.tab20(np.linspace(0, 1, len(sources)))
 source_color_map = {source: colors[i] for i, source in enumerate(sources)}
 
-# 定义四个数据集
+# 定义四个数据集及其对应的模型名称（用于边界截断）
 datasets = {
-    'all_data': df,
-    'continuum-fitting': df[df[model_col] == 'continuum-fitting'],
-    'reflection': df[df[model_col] == 'reflection'],
-    'combining': df[df[model_col] == 'combining']
+    'all_data': {'df': df, 'model_name': None},
+    'continuum-fitting': {'df': df[df[model_col] == 'continuum-fitting'], 'model_name': 'continuum-fitting'},
+    'reflection': {'df': df[df[model_col] == 'reflection'], 'model_name': 'reflection'},
+    'combining': {'df': df[df[model_col] == 'combining'], 'model_name': 'combining'}
 }
 
-# 定义绘图配置 - 修改x轴范围为(-1, 1)和(0.25, 1)
+# 定义绘图配置 - x轴范围为(-1, 1)和(0.25, 1)
+# 添加 subplot_label 用于标识子图
 plot_configs = [
     {'name': 'spin_vs_inclination_full', 'x_range': (-1, 1), 'y_range': (0, 90),
      'x_label': r'自旋值 $a_*$', 'y_label': r'倾角 $i$ (度)', 'y_type': 'inclination',
-     'title_suffix': '自旋-倾角关系 (全范围)'},
+     'title_suffix': '自旋-倾角关系 (全范围)', 'subplot_label': 'a'},
     {'name': 'spin_vs_inclination_zoom', 'x_range': (0.25, 1), 'y_range': (0, 90),
      'x_label': r'自旋值 $a_*$', 'y_label': r'倾角 $i$ (度)', 'y_type': 'inclination',
-     'title_suffix': '自旋-倾角关系 (自旋 ≥ 0.25)'},
+     'title_suffix': '自旋-倾角关系 (自旋 ≥ 0.25)', 'subplot_label': 'b'},
     {'name': 'spin_vs_distance_full', 'x_range': (-1, 1), 'y_range': (0, 15),
      'x_label': r'自旋值 $a_*$', 'y_label': r'距离 $d$ (kpc)', 'y_type': 'distance',
-     'title_suffix': '自旋-距离关系 (全范围)'},
+     'title_suffix': '自旋-距离关系 (全范围)', 'subplot_label': 'c'},
     {'name': 'spin_vs_distance_zoom', 'x_range': (0.25, 1), 'y_range': (0, 15),
      'x_label': r'自旋值 $a_*$', 'y_label': r'距离 $d$ (kpc)', 'y_type': 'distance',
-     'title_suffix': '自旋-距离关系 (自旋 ≥ 0.25)'}
+     'title_suffix': '自旋-距离关系 (自旋 ≥ 0.25)', 'subplot_label': 'd'}
 ]
 
 # 两个版本：带圆点和不带圆点
@@ -297,7 +320,10 @@ for version in versions:
     print("-"*40)
     
     # 为每个数据集生成图片
-    for dataset_name, dataset_df in datasets.items():
+    for dataset_name, dataset_info in datasets.items():
+        dataset_df = dataset_info['df']
+        model_name = dataset_info['model_name']
+        
         if dataset_df.empty:
             print(f"⚠️ 数据集 '{dataset_name}' 为空，跳过")
             continue
@@ -330,14 +356,19 @@ for version in versions:
                 ax.text(0.5, 0.5, '无有效数据', ha='center', va='center', transform=ax.transAxes, fontsize=14)
                 ax.set_xlim(config['x_range'][0], config['x_range'][1])
                 ax.set_ylim(config['y_range'][0], config['y_range'][1])
+                # 即使没有数据也添加标签（去掉黑框）
+                ax.text(0.02, 0.98, f'({config["subplot_label"]})', transform=ax.transAxes, 
+                       fontsize=16, fontweight='bold', va='top', ha='left',
+                       bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='none'))
                 continue
             
-            # 绘制图形
+            # 绘制图形，传入模型名称和子图标签
             title = f'{config["title_suffix"]}'
             plot_dataset(ax, plot_df, config['x_range'], config['y_range'], 
                         config['y_type'], source_color_map, title,
                         config['x_label'], config['y_label'], 
-                        show_points=version['show_points'], alpha=0.4)
+                        show_points=version['show_points'], alpha=0.4,
+                        model_name=model_name, subplot_label=config['subplot_label'])
         
         # 调整布局
         plt.tight_layout()
@@ -363,7 +394,10 @@ for version in versions:
     print(f"\n📊 生成 {version['suffix']} 版本的单独图片...")
     print("-"*40)
     
-    for dataset_name, dataset_df in datasets.items():
+    for dataset_name, dataset_info in datasets.items():
+        dataset_df = dataset_info['df']
+        model_name = dataset_info['model_name']
+        
         if dataset_df.empty:
             continue
         
@@ -384,14 +418,15 @@ for version in versions:
                 print(f"    ⚠️ 跳过 {config['name']} (无有效数据)")
                 continue
             
-            # 创建单张图
+            # 创建单张图（单张图不需要子图标签）
             fig, ax = plt.subplots(figsize=(12, 10))
             
             title = f'{dataset_name.replace("-", " ").title()} - {config["title_suffix"]}'
             plot_dataset(ax, plot_df, config['x_range'], config['y_range'],
                         config['y_type'], source_color_map, title,
                         config['x_label'], config['y_label'], 
-                        show_points=version['show_points'], alpha=0.4)
+                        show_points=version['show_points'], alpha=0.4,
+                        model_name=model_name, subplot_label=None)  # 单张图不加标签
             
             # 保存图片
             output_dir = os.path.join(output_base_dir, version['name'], dataset_name, 'output')
@@ -409,20 +444,20 @@ print(f"{output_base_dir}/")
 for version in versions:
     print(f"  📁 {version['name']}/ ({version['suffix']})")
     for dataset_name in datasets.keys():
-        if not datasets[dataset_name].empty:
+        if not datasets[dataset_name]['df'].empty:
             print(f"    📁 {dataset_name}/")
             print(f"      📁 output/ (包含该数据集的5张图片: 1张组合图 + 4张单图)")
             print(f"      📁 scripts/")
-print(f"\n📊 总计生成图片数: {total_plots} 张单图 + {len(versions) * sum(1 for d in datasets.values() if not d.empty)} 张组合图 = {total_plots + len(versions) * sum(1 for d in datasets.values() if not d.empty)} 张图片")
+print(f"\n📊 总计生成图片数: {total_plots} 张单图 + {len(versions) * sum(1 for d in datasets.values() if not d['df'].empty)} 张组合图 = {total_plots + len(versions) * sum(1 for d in datasets.values() if not d['df'].empty)} 张图片")
 print(f"\n图片保存位置: {os.path.abspath(output_base_dir)}")
 print("="*60)
 
 # 生成统计信息
 print("\n📈 统计信息:")
-for dataset_name, dataset_df in datasets.items():
-    if not dataset_df.empty:
-        print(f"  {dataset_name}: {len(dataset_df)} 个数据点")
+for dataset_name, dataset_info in datasets.items():
+    if not dataset_info['df'].empty:
+        print(f"  {dataset_name}: {len(dataset_info['df'])} 个数据点")
 print(f"  黑洞总数: {len(sources)}")
 print(f"  图片版本: 2个版本 (带数据点 / 不带数据点)")
-print(f"  每个版本: {sum(1 for d in datasets.values() if not d.empty)} 个数据集 × 4张图 = {sum(1 for d in datasets.values() if not d.empty) * 4} 张单图 + {sum(1 for d in datasets.values() if not d.empty)} 张组合图")
+print(f"  每个版本: {sum(1 for d in datasets.values() if not d['df'].empty)} 个数据集 × 4张图 = {sum(1 for d in datasets.values() if not d['df'].empty) * 4} 张单图 + {sum(1 for d in datasets.values() if not d['df'].empty)} 张组合图")
 print("="*60)
