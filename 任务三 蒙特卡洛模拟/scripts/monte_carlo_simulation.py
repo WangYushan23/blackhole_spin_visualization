@@ -157,7 +157,7 @@ def plot_single_hist(samples, title, filename):
     plt.xlim(-1, 1)
     plt.ylim(0, Y_LIMIT)
     plt.xlabel('黑洞自旋值 a', fontsize=14)
-    plt.ylabel('MC预测值', fontsize=14)  # 修改为"MC预测值"
+    plt.ylabel('MC预测值', fontsize=14)
     plt.title(title, fontsize=16)
     plt.grid(True, linestyle='--', alpha=0.5)
     
@@ -177,20 +177,24 @@ plot_single_hist(samples_all, '所有测量数据（所有源）', 'spin_distrib
 plot_single_hist(samples_cf, '仅 Continuum-fitting 模型', 'spin_distribution_cf.png')
 plot_single_hist(samples_ref, '仅 Reflection 模型', 'spin_distribution_ref.png')
 
-# 生成三图并排的对比图
+# 生成三图并排的对比图，添加子图标签 (a), (b), (c)（无黑框）
 fig, axes = plt.subplots(1, 3, figsize=(18, 6))
 
-def plot_on_ax(samples, title, ax):
-    """在指定坐标轴上绘制柱状图"""
+def plot_on_ax(samples, title, ax, subplot_label):
+    """在指定坐标轴上绘制柱状图，并添加子图标签"""
     counts, _ = np.histogram(samples, bins=BINS)
     bin_centers = (BINS[:-1] + BINS[1:]) / 2
     ax.bar(bin_centers, counts, width=0.08, edgecolor='black', alpha=0.7, color='steelblue')
     ax.set_xlim(-1, 1)
     ax.set_ylim(0, Y_LIMIT)
     ax.set_xlabel('黑洞自旋值 a', fontsize=12)
-    ax.set_ylabel('MC预测值', fontsize=12)  # 修改为"MC预测值"
+    ax.set_ylabel('MC预测值', fontsize=12)
     ax.set_title(title, fontsize=14)
     ax.grid(True, linestyle='--', alpha=0.5)
+    
+    # 添加子图标签 (a), (b), (c) 在左上角，无黑框
+    ax.text(0.02, 0.95, f'({subplot_label})', transform=ax.transAxes, 
+            fontsize=16, fontweight='bold', va='top', ha='left')
     
     # 添加数值标签（可选）
     for center, count in zip(bin_centers, counts):
@@ -198,9 +202,10 @@ def plot_on_ax(samples, title, ax):
             ax.text(center, count + max(counts) * 0.01, str(int(count)), 
                    ha='center', va='bottom', fontsize=8)
 
-plot_on_ax(samples_all, '所有测量数据', axes[0])
-plot_on_ax(samples_cf, 'Continuum-fitting 模型', axes[1])
-plot_on_ax(samples_ref, 'Reflection 模型', axes[2])
+# 分别绘制三个子图，并添加标签 a, b, c
+plot_on_ax(samples_all, '所有测量数据', axes[0], 'a')
+plot_on_ax(samples_cf, 'Continuum-fitting 模型', axes[1], 'b')
+plot_on_ax(samples_ref, 'Reflection 模型', axes[2], 'c')
 
 plt.tight_layout()
 plt.savefig(OUTPUT_DIR / 'spin_distribution_combined.png', dpi=150, bbox_inches='tight')
@@ -211,7 +216,7 @@ print(f"\n所有图片已保存到: {OUTPUT_DIR}")
 print("  1. spin_distribution_all.png - 所有测量数据")
 print("  2. spin_distribution_cf.png - Continuum-fitting模型")
 print("  3. spin_distribution_ref.png - Reflection模型")
-print("  4. spin_distribution_combined.png - 三图对比")
+print("  4. spin_distribution_combined.png - 三图对比（带子图标签 a, b, c）")
 
 # ==================== 统计信息 ====================
 def print_statistics(samples, name):
